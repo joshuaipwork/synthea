@@ -83,6 +83,10 @@ class ContextManager:
             # if so, parse only the prompt in each command in order to not confuse the bot
             text, added_tokens = self._get_text(message)
 
+            # don't include empty messages so the bot doesn't get confused.
+            if not text:
+                break
+
             # stop retrieving context if the context would overflow
             if added_tokens + token_count > history_token_limit:
                 break
@@ -160,6 +164,10 @@ class ContextManager:
             # some messages in the history may be commands for the bot
             # if so, parse only the prompt in each command in order to not confuse the bot
             text, added_tokens = self._get_text(thread_message)
+
+            # don't include empty messages so the bot doesn't get confused.
+            if not text:
+                break
 
             # stop retrieving context if the context would overflow
             if added_tokens + token_count > history_token_limit:
