@@ -1,0 +1,5 @@
+user_message_tag: "USER:"
+bot_message_tag: "ASSISTANT:"
+header_template: "<|system_prompt|>\n"
+message_template: "<|message_tag|> <|text|>\n"
+system_prompt: "A chat between a curious user and an artificial intelligence assistant. The assistant gives helpful, detailed, and polite answers to the user's questions.\n\n"

@@ -8,7 +8,7 @@ import re
 
 from transformers import StoppingCriteria
 
-USERNAME_REGEX_PATTERN = "\n([^a-z\n])+:"
+USERNAME_REGEX_PATTERN = "\n([^\n])+: "
 
 class StopAtReply(StoppingCriteria):
     """
@@ -16,9 +16,12 @@ class StopAtReply(StoppingCriteria):
     and add it to the output. Users don't like being told what they are about to say,
     so this stopping criteria ends the response if that happens.
     """
-    def __init__(self, tokenizer: AutoTokenizer, prompt: str):
-        # self.target_sequence: str = target_sequence
+    def __init__(self, tokenizer: AutoTokenizer, prompt_format: dict[str, str], prompt: str):
         self.tokenizer: AutoTokenizer = tokenizer
+        self.forbidden_strings = [
+            prompt_format['user_message_tag'],
+            prompt_format['bot_message_tag'],
+        ]
         self.prompt = prompt
 
     def __call__(self, input_ids, scores, **kwargs):
@@ -29,12 +32,8 @@ class StopAtReply(StoppingCriteria):
         # so remove the prompt
         generated_text = generated_text.replace(self.prompt,'')
 
-        # Check if a username of the pattern \nNAME: appears in the generated text
-        if re.search(USERNAME_REGEX_PATTERN, generated_text) is not None:
-            print(f"Stopped generation for {generated_text}")
-            return True  # Stop generation
-
-        return False  # Continue generation
+        # quit if any forbidden strings are in it
+        return any(string in generated_text for string in self.forbidden_strings)
 
     def __len__(self):
         return 1
@@ -43,11 +42,16 @@ class StopAtReply(StoppingCriteria):
         yield self
 
 class ChattyModel:
+    """
+    A wrapper around Huggingface models for the chatbot.
+    """
     def __init__(self):
-        with open('config.yaml', "r", encoding="utf-8") as f:
-            self.config = yaml.safe_load(f)
-            self.tokenizer = None
-            self.model = None
+        with open('config.yaml', "r", encoding="utf-8") as file:
+            self.config = yaml.safe_load(file)
+        with open(f"formats/{self.config['format']}.yaml", "r", encoding="utf-8") as file:
+            self.format = yaml.safe_load(file)
+        self.tokenizer = None
+        self.model = None
     
     def load_model(self):
         """
@@ -55,15 +59,20 @@ class ChattyModel:
         """
         # TODO: Add functionality to select the model
         use_triton = False
-        self.tokenizer = AutoTokenizer.from_pretrained(self.config['model_name_or_path'], use_fast=True)
-        self.model = AutoGPTQForCausalLM.from_quantized(self.config['model_name_or_path'],
-                model_basename=self.config['model_basename'],
-                use_safetensors=True,
-                trust_remote_code=True,
-                device_map='auto',
-                use_triton=use_triton,
-                quantize_config=None,
-            )
+        self.tokenizer = AutoTokenizer.from_pretrained(
+            self.config['model_name_or_path'],
+            use_fast=True,
+            add_special_tokens=True,
+        )
+        self.model = AutoGPTQForCausalLM.from_quantized(
+            self.config['model_name_or_path'],
+            model_basename=self.config['model_basename'],
+            use_safetensors=True,
+            trust_remote_code=True,
+            device_map='auto',
+            use_triton=use_triton,
+            quantize_config=None,
+        )
 
         self.model.seqlen = self.config["seqlen"]
 
@@ -104,12 +113,12 @@ class ChattyModel:
             "text-generation",
             model=self.model,
             tokenizer=self.tokenizer,
-            min_new_tokens=2,
+            min_new_tokens=1,
             max_new_tokens=max_new_tokens,
             temperature=temperature,
             top_p=top_p,
             repetition_penalty=repetition_penalty,
-            stopping_criteria=StopAtReply(self.tokenizer, prompt)
+            stopping_criteria=StopAtReply(self.tokenizer, self.format, prompt)
         )
 
         output = pipe(prompt, return_full_text=False)
