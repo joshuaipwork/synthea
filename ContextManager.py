@@ -6,7 +6,7 @@ message history and persona.
 from typing import AsyncIterator, Optional
 import discord
 import yaml
-from ChattyModel import ChattyModel
+from SyntheaModel import ChattyModel
 
 from CommandParser import ChatbotParser, CommandError, ParserExitedException
 

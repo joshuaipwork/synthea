@@ -7,7 +7,7 @@ from typing import Optional
 import discord
 import yaml
 
-from ChattyModel import ChattyModel
+from SyntheaModel import ChattyModel
 from CommandParser import ChatbotParser, CommandError, ParserExitedException
 from ContextManager import ContextManager
 
