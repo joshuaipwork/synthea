@@ -57,7 +57,6 @@ class LLMClient(discord.Client):
                 await reaction.message.delete()
             if (reaction.emoji == '🔁'):
                 # regenerate the response.
-
                 await reaction.message.delete()
 
     async def on_message(self, message: discord.Message):
@@ -110,17 +109,12 @@ class LLMClient(discord.Client):
 
             try:
                 args = self.parser.parse(command)
-            except ParserExitedException as err:
-                # If the parser exits prematurely without encountering an error, this indicates that the user
-                # invoked the help action. Show them that help text and mark the command as successfully responded.
-                await message.reply(f'```{err}```', mention_author=True)
-                return
             except CommandError as err:
                 # for other types of error, show them the error and mark the command as failed.
                 raise err
 
             # now, respond to the command appropriately.
-            await self.respond_to_command(args, message)
+            await self.respond(args, message)
 
             # let the user know that we successfully completed their task.
             await message.add_reaction("✅")
@@ -133,7 +127,7 @@ class LLMClient(discord.Client):
             # let the user know that the bot is done with their command.
             await message.remove_reaction("⏳", self.user)
 
-    async def respond_to_command(self, args, message: discord.Message):
+    async def respond(self, args, message: discord.Message):
         """
         
         """
@@ -193,7 +187,6 @@ class LLMClient(discord.Client):
             )
 
             # add a picture via url
-
             # TODO: Add local file upload options.
             file: Optional[discord.File] = None
             if 'avatar' in char_config:
