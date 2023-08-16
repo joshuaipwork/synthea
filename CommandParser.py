@@ -1,5 +1,6 @@
 import argparse
 import discord
+import yaml
 
 class CommandError(ValueError):
     """
@@ -69,9 +70,17 @@ class ChatbotParser:
             help="The prompt to give the bot."
         )
 
+        # load config
+        with open('config.yaml', 'r', encoding='utf-8') as f:
+            self.config = yaml.safe_load(f)
+
     def parse(self, command: str) -> argparse.Namespace:
         """
 
         """
+        # remove the command start string if it was present.
+        if command.startswith(self.config['command_start_str']):
+            command = command[len(self.config['command_start_str']) + 1:]
         args = self.parser.parse_args(command.split())
+        args.prompt = " ".join(args.prompt)
         return args
