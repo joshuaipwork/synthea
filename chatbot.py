@@ -151,34 +151,22 @@ class LLMClient(discord.Client):
                 prompt=prompt,
                 character=character
             )
-            await self.send_response_as_character(response, character, message, create_thread)
+            await self.send_response_as_character(response, character, message)
         else:
             print(f'Generating for {message.author} with prompt: \n{prompt}')
             response = self.model.generate_from_defaults(prompt=prompt)
-            await self.send_response_as_base(response, message, create_thread, thread_name)
+            await self.send_response_as_base(response, message)
 
-    async def send_response_as_base(self, response: str, message: discord.Message, create_thread: bool=False, thread_name: str=""):
+    async def send_response_as_base(self, response: str, message: discord.Message):
         """
         Sends a simple response using the base template of the model.
-        If create_thread is True, then a new thread will be created with
-        the specified name.
         """
-        if create_thread:
-            if not thread_name:
-                thread_name = f"AI chat with {message.author}"
-            thread = await message.create_thread(name=thread_name)
+        await self.send_response(
+            response_text=response,
+            message_to_reply=message
+        )
 
-            await self.send_response(
-                response_text=response,
-                thread=thread
-            )
-        else:
-            await self.send_response(
-                response_text=response,
-                message_to_reply=message
-            )
-
-    async def send_response_as_character(self, response: str, character: str, message: discord.Message, create_thread: bool=False, thread_name: str=""):
+    async def send_response_as_character(self, response: str, character: str, message: discord.Message):
         """
         Sends the given response in the same channel as the given message while
         using the picture and name associated with the character.
@@ -206,12 +194,6 @@ class LLMClient(discord.Client):
 
             # if this message was in a thread, figure out which thread it was
             thread: discord.Thread | None = None
-            if create_thread:
-                if not thread_name:
-                    thread_name = f"{message.author}\'s chat with {character}"
-                thread = await message.create_thread(name=thread_name)
-            elif isinstance(message.channel, discord.Thread):
-                thread = message.channel
 
             # send the messages
             await self.send_response(
