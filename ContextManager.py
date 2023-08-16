@@ -3,12 +3,12 @@
 Generate a prompt for the AI to respond to, given the
 message history and persona.
 """
-import typing
+from typing import Optional
 import discord
 import yaml
 from ChattyModel import ChattyModel
 
-from CommandParser import ChatbotParser
+from CommandParser import ChatbotParser, CommandError, ParserExitedException
 
 class ContextManager:
     """
@@ -32,30 +32,100 @@ class ContextManager:
         self.user_message_tag: str = self.model.config['user_message_tag']
         self.bot_message_tag: str = self.model.config['bot_message_tag']
         self.system_prompt: str = self.model.config['system_prompt']
-        # self.bot_name: str = self.model.config['bot_name']
 
-    def compile_prompt_from_text(self, text: str):
+        with open('config.yaml', "r", encoding="utf-8") as f:
+            self.config = yaml.safe_load(f)
+
+    async def compile_prompt_from_chat(self, message: discord.Message, bot_user_id: str, character: Optional[str]=None):
         """
-        Creates a prompt from a single message, according to the model's template.
+        Generates a prompt which includes the context from previous messages in a reply chain.
+        Messages outside of the reply chain are ignored.
+
+        Args:
+            character (str): The name of a character to use. If the character is specified, the character file will populate
+                the system prompt before user prompts are created.
         """
-        prompt = f"{self.system_prompt}\n{self.user_message_tag} {text}\n{self.bot_message_tag}"
+        # pieces of the prompts are appended to the list then assembled in reverse order into the final prompt
+        prompt: list[str] = []
+        token_count: int = 0
 
-        return prompt
+        system_prompt: str = ""
+        if character:
+            with open(f"characters/{character}.yaml", 'r', encoding='utf-8') as f:
+                char_chat_config = yaml.safe_load(f)
+                system_prompt = char_chat_config['system_prompt']
+        else:
+            system_prompt = self.model.config['system_prompt']
 
-    def compile_prompt_from_character(self, text: str, character: str):
+        # add the bot role tag so the AI knows to continue from this point.
+        prompt.append(self.bot_message_tag)
+        token_count += len(self.bot_message_tag) // self.EST_CHARS_PER_TOKEN
+
+        # history contains the most recent messages that were sent before the
+        # current message.
+        system_prompt_tokens: int = len(self.system_prompt) // self.EST_CHARS_PER_TOKEN
+        history_token_limit: int = self.seq_len - self.max_new_tokens - system_prompt_tokens
+      
+        # add the user's last message
+        user_tag = message.author.nick if message.author.nick else message.author.global_name
+        prompt.append(f"{user_tag.upper()}: {message.content}")
+        token_count += len(prompt[-1]) // self.EST_CHARS_PER_TOKEN
+
+        # go back message-by-message through the reply chain and add it to the context
+        while message.reference:
+            try:
+                message = await message.channel.fetch_message(message.reference.message_id)
+            except discord.NotFound:
+                # the user may have deleted their message
+                break
+
+            # some messages in the chain may be commands for the bot
+            # if so, parse only the prompt in each command in order to not confuse the bot
+            text, added_tokens = self._get_text(message)
+
+            # stop retrieving context if the context would overflow
+            if added_tokens + token_count > history_token_limit:
+                break
+
+            # update the prompt with this message
+            if message.webhook_id or message.author.id == bot_user_id:
+                prompt.append(f"{self.bot_message_tag} {text}")
+            else:
+                user_tag = message.author.nick if message.author.nick else message.author.global_name
+                prompt.append(f"{user_tag.upper()}: {text}")
+            
+            token_count += added_tokens
+
+        # the system prompt to the beginning of the prompt
+        prompt.append(system_prompt)
+
+        # convert the list into a single string
+        final_prompt = "\n".join(reversed(prompt))
+        return final_prompt
+
+    def _get_text(self, message: discord.Message):
         """
-        Creates a prompt from a single message, according to the model's template.
+        Gets the text from a message and counts the tokens.
+
+        Under most conditions, the text it returns will be message.content, however if it is a command
+        for the bot, then only the prompt from that command will be returned.
         """
-        with open(f'characters/{character}.yaml', "r", encoding='utf-8') as f:
-            char_config = yaml.safe_load(f)
+        if message.content.startswith(self.config['command_start_str']):
+            try:
+                args = ChatbotParser().parse(message.content)
+                text = args.prompt
+            except (CommandError, ParserExitedException):
+                # if the command is invalid, just append the whole thing
+                text = message.content
+        else:
+            text = message.content
 
-        prompt = f"{self.system_prompt}\n{self.user_message_tag} {char_config['starter']}\n{text}\n{self.bot_message_tag}"
+        tokens = len(text) // self.EST_CHARS_PER_TOKEN
+        return text, tokens
 
-        return prompt
-
-    async def compile_prompt_from_chat(self, message: discord.Message, bot_user_id: int, character: str | None=None):
+    async def compile_prompt_from_thread(self, message: discord.Message, bot_user_id: int, character: str | None=None):
         """
-        Generates a prompt which includes the context from previous messages.
+        Generates a prompt which includes the context from previous messages in a thread.
 
         Args:
             character (str): The name of a character to use. If the character is specified, the character file will populate
@@ -68,8 +138,6 @@ class ContextManager:
                 char_chat_config = yaml.safe_load(f)
                 system_prompt = char_chat_config['system_prompt']
         else:
-            # with open("characters/default.yaml", 'r', encoding='utf-8') as f:
-            #     default_chat_config = yaml.safe_load(f)
             system_prompt = self.model.config['system_prompt']
 
         thread: discord.Thread = message.channel
@@ -84,19 +152,14 @@ class ContextManager:
         token_count: int = 0
         prompt: list[str] = []
 
-        # # add the bot role tag so the AI knows to continue from this point.
+        # add the bot role tag so the AI knows to continue from this point.
         prompt.append(self.bot_message_tag)
-        # prompt.append(f"{self.bot_name}: ")
 
         # go back message-by-message through the thread and add it to the context
         async for thread_message in thread.history(limit=20):
-            content = thread_message.content
-
-            # don't add empty messages since that will confuse the bot
-            if not content:
-                continue
-
-            added_tokens = len(content) // self.EST_CHARS_PER_TOKEN + 1
+            # some messages in the history may be commands for the bot
+            # if so, parse only the prompt in each command in order to not confuse the bot
+            text, added_tokens = self._get_text(thread_message)
 
             # stop retrieving context if the context would overflow
             if added_tokens + token_count > history_token_limit:
@@ -104,10 +167,10 @@ class ContextManager:
 
             # check if the message was sent by me or a webhook
             if thread_message.webhook_id or thread_message.author.id == bot_user_id:
-                prompt.append(f"{self.bot_message_tag} {content}")
+                prompt.append(f"{self.bot_message_tag} {text}")
             else:
                 user_tag = thread_message.author.nick if thread_message.author.nick else thread_message.author.global_name
-                prompt.append(f"{user_tag.upper()}: {content}")
+                prompt.append(f"{user_tag.upper()}: {text}")
             
             token_count += added_tokens
 
@@ -117,27 +180,12 @@ class ContextManager:
             start_message = await thread.parent.fetch_message(thread.id)
 
             # parse the first message to figure out the parameters and the original prompt
-            args = ChatbotParser().parse(start_message.content)
-            content = args.prompt
-            added_tokens = len(content) // self.EST_CHARS_PER_TOKEN + 1
+            text, added_tokens = self._get_text(start_message)
 
             # if it fits in the context, add it
             if added_tokens + token_count < history_token_limit:
                 user_tag = start_message.author.nick if start_message.author.nick else start_message.author.global_name
-                prompt.append(f"{user_tag.upper()}: {content}")
-        
-        # USER: Guidelines for the chat
-        # ASSISTANT:
-        # user_1: Thing that user 1 said
-        # bot_name: Thing that bot responded with
-        # user_1: Thing that user 1 said
-        # bot_name:
-        # prompt.append(self.bot_message_tag)
-        # prompt[-1] = self.bot_message_tag + prompt[-1]
-
-        # add the starter to the beginning of the prompt
-        # prompt.append("")
-        # prompt.append(f"{self.user_message_tag} {system_prompt}")
+                prompt.append(f"{user_tag.upper()}: {text}")
 
         # the system prompt to the beginning of the prompt
         prompt.append(system_prompt)

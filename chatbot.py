@@ -66,15 +66,25 @@ class LLMClient(discord.Client):
             return
 
         # by default, don't respond to messages unless it was directed at the bot
-        # if the message starts with the start string, then it was definitely directed at the bot.
-        message_invokes_chatbot: bool = message.content.startswith(COMMAND_START_STR)
+        message_invokes_chatbot: bool = False
+        if message.content.startswith(COMMAND_START_STR):
+            # if the message starts with the start string, then it was definitely directed at the bot.
+            message_invokes_chatbot = True
+        elif message.reference:
+            # if the message replied to the bot, then it was directed at the bot.
+            try:
+                replied_message: discord.Message = await message.channel.fetch_message(message.reference.message_id)
+                if replied_message.author.id == self.user.id:
+                    message_invokes_chatbot = True
+            except (discord.NotFound, discord.HTTPException, discord.Forbidden) as exc:
+                print(exc)
 
         # if the message is part of a thread created by a chatbot command, we should respond
         message_in_chatbot_thread: bool = False
         if isinstance(message.channel, discord.Thread):
             # TODO: deal with the case that the original message was deleted.
-            thread_start_message = await message.channel.parent.fetch_message(message.channel.id)
-            message_in_chatbot_thread = thread_start_message.content.startswith(COMMAND_START_STR)
+            replied_message = await message.channel.parent.fetch_message(message.channel.id)
+            message_in_chatbot_thread = replied_message.content.startswith(COMMAND_START_STR)
  
         if not (message_invokes_chatbot or message_in_chatbot_thread):
             return
@@ -88,7 +98,7 @@ class LLMClient(discord.Client):
             command: str = message.content
             if message_in_chatbot_thread:
                 # the first message in a thread has the parameters for the conversation
-                command = thread_start_message.content
+                command = replied_message.content
 
             try:
                 args = self.parser.parse(command)
@@ -131,27 +141,23 @@ class LLMClient(discord.Client):
         context_manager: ContextManager = ContextManager(self.model)
 
         # generate a response and send it to the user.
+        prompt = await context_manager.compile_prompt_from_chat(
+            message=message,
+            bot_user_id=self.user.id,
+            character=character,
+        )
+
         if character:
-            prompt = context_manager.compile_prompt_from_character(
-                text=prompt,
-                character=character
-            )
-            
             print(f'Generating for {message.author} with char {character} and prompt: \n{prompt}')
-        
             response = self.model.generate_from_character(
                 prompt=prompt,
                 character=character
             )
             await self.send_response_as_character(response, character, message, create_thread)
         else:
-            prompt = context_manager.compile_prompt_from_text(text=prompt)
-            
             print(f'Generating for {message.author} with prompt: \n{prompt}')
-            
             response = self.model.generate_from_defaults(prompt=prompt)
             await self.send_response_as_base(response, message, create_thread, thread_name)
-        print(f'Response:\n{response}')
 
     async def respond_to_chatbot_thread(
             self,
@@ -169,7 +175,7 @@ class LLMClient(discord.Client):
 
         # retrieve previous entries in this thread for this conversation
         context_manager: ContextManager = ContextManager(self.model)
-        prompt = await context_manager.compile_prompt_from_chat(
+        prompt = await context_manager.compile_prompt_from_thread(
             message=message,
             character=character,
             bot_user_id=self.user.id,
@@ -177,7 +183,7 @@ class LLMClient(discord.Client):
 
         # generate a response and send it to the user.
         if character:
-            print(f'Generating for {message.author} with char {character} on thread {message.channel} with prompt {prompt}')
+            print(f'Generating for {message.author} with char {character} on thread {message.channel} with prompt ({len(prompt)} chars):\n {prompt}')
             response = self.model.generate_from_character(
                 prompt=prompt,
                 character=character
@@ -189,7 +195,6 @@ class LLMClient(discord.Client):
                 prompt=prompt
             )
             await self.send_response_as_base(response, message)
-        print(f'Response:\n{response}')
 
     async def send_response_as_base(self, response: str, message: discord.Message, create_thread: bool=False, thread_name: str=""):
         """
@@ -203,7 +208,7 @@ class LLMClient(discord.Client):
             thread = await message.create_thread(name=thread_name)
 
             await self.send_response(
-                response, 
+                response,
                 thread=thread
             )
         else:
@@ -268,28 +273,38 @@ class LLMClient(discord.Client):
                 as this message and the author of the message will be tagged in the response.
             webhook (discord.Webhook): If provided, the bot will respond using this webhook instead of as itself.
                 Note that webhooks cannot reply to messages, so if passed message_to_reply is ignored.
+                Webhooks also cannot speak in DMs, so if it is a DM, the webhook will be ignored.
             thread (discord.Thread): If provided, the response will be sent in this thread.
         """
         # split up the response into messages and send them individually
+        print(f'Response ({len(response_text)} chars):\n{response_text}')
+
         msg_index = 0
         while msg_index * CHAR_LIMIT < len(response_text):
             message_text = response_text[msg_index * CHAR_LIMIT:(msg_index + 1) * CHAR_LIMIT]
-            print(message_text, len(message_text))
-            if webhook:
+            if message_to_reply and isinstance(message_to_reply.channel, discord.DMChannel):
+                # TODO: remove duplicate code
+                if msg_index == 0:
+                    await message_to_reply.reply(message_text, mention_author=True)
+                else:
+                    await message_to_reply.channel.send(message_text, mention_author=True)
+            elif webhook:
                 # webhooks can't reply to anything, so message_to_reply is ignored
                 if thread:
                     await webhook.send(message_text, thread=thread)
                 else:
                     await webhook.send(message_text)
-            elif message_to_reply:
+            elif thread:
                 # It doesn't seem like you can send a message to a thread and reply at the same time
                 # TODO: Spend more time verifying that this is the case
-                if thread:
-                    await message_to_reply.channel.send(message_text, thread=thread)
+                await thread.send(message_text)
+            elif message_to_reply:
+                # a message in a channel
+                # only reply to the first message to prevent spamming
+                if msg_index == 0:
+                    await message_to_reply.reply(message_text, mention_author=True)
                 else:
-                    # only reply to the first message to prevent spamming
-                    if msg_index == 0:
-                        await message_to_reply.reply(message_text, mention_author=True)
-                    else:
-                        await message_to_reply.channel.send(message_text, mention_author=True)
+                    await message_to_reply.channel.send(message_text, mention_author=True)
+            else:
+                raise ValueError("No message found to reply to!")
             msg_index += 1
