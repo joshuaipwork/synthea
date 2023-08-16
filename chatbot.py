@@ -61,7 +61,7 @@ class LLMClient(discord.Client):
         if message.author == self.user:
             return
 
-        # prevent bot from responding to any of its generated webhooks
+        # # prevent bot from responding to any of its generated webhooks
         if message.webhook_id:
             return
 
@@ -75,6 +75,9 @@ class LLMClient(discord.Client):
             try:
                 replied_message: discord.Message = await message.channel.fetch_message(message.reference.message_id)
                 if replied_message.author.id == self.user.id:
+                    message_invokes_chatbot = True
+                elif replied_message.webhook_id and self._get_character_from_webhook(replied_message):
+                    # check if this webhook represents a character that the chatbot adopted
                     message_invokes_chatbot = True
             except (discord.NotFound, discord.HTTPException, discord.Forbidden) as exc:
                 print(exc)
@@ -138,12 +141,11 @@ class LLMClient(discord.Client):
         prompt: str = args.prompt
 
         # insert the user's prompt into the prompt template specified by the model
-        context_manager: ContextManager = ContextManager(self.model)
+        context_manager: ContextManager = ContextManager(self.model, self.user.id)
 
         # generate a response and send it to the user.
         prompt = await context_manager.compile_prompt_from_chat(
             message=message,
-            bot_user_id=self.user.id,
             character=character,
         )
 
@@ -174,11 +176,10 @@ class LLMClient(discord.Client):
         character: str | None = thread_args.character
 
         # retrieve previous entries in this thread for this conversation
-        context_manager: ContextManager = ContextManager(self.model)
+        context_manager: ContextManager = ContextManager(self.model, self.user.id)
         prompt = await context_manager.compile_prompt_from_thread(
             message=message,
             character=character,
-            bot_user_id=self.user.id,
         )
 
         # generate a response and send it to the user.
@@ -308,3 +309,22 @@ class LLMClient(discord.Client):
             else:
                 raise ValueError("No message found to reply to!")
             msg_index += 1
+
+    def _get_character_from_webhook(self, message: discord.Message) -> str | None:
+        """
+        Args:
+            message (discord.Message)
+        Returns:
+            If the message is from a webhook, returns the character's name. The name is the
+            name of the file which stores the character's information, as well as the string
+            used with the -c option to invoke the character through a command.
+
+            Otherwise, returns None
+        """
+        with open('guilds/character_mapping.yaml', mode='r', encoding='utf-8') as f:
+            char_mapping = yaml.safe_load(f)
+            if message.guild.id not in char_mapping:
+                return None
+            if message.author.name in char_mapping[message.guild.id]:
+                return char_mapping[message.guild.id][message.author.name]
+        return None
