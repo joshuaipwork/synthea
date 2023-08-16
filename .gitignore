@@ -6,3 +6,4 @@ tests/
 __pycache__/
 **/__pycache__/
 config.yaml
+models/*
