@@ -3,8 +3,6 @@ import argparse
 import json
 from chatbot import LLMClient
 
-
-
 with open('secrets.json', "r") as f:
     secrets = json.load(f)
 
