@@ -11,10 +11,6 @@ class ParserExitedException(Exception):
     Indicates that argparse would have exited if this were a command line command
     rather than a discord bot command
     """
-class ParserHelpException(Exception):
-    """
-    The message is expected to contain a help message for the parser's use.
-    """
 
 class CommandParser(argparse.ArgumentParser):
     """
@@ -63,6 +59,13 @@ class ChatbotParser:
             '-n', '--thread_name',
             default="",
             help="If the bot creates a new thread to contain its response, it will use this name. Otherwise, a generic name is used."
+        )
+        self.parser.add_argument(
+            '-max', '--max_new_tokens',
+            action="store",
+            type=int,
+            default=None,
+            help="The maximum number of tokens which the bot can generate."
         )
         self.parser.add_argument(
             'prompt',
