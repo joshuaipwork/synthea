@@ -74,17 +74,21 @@ class LLMClient(discord.Client):
         if message.content.startswith(COMMAND_START_STR):
             # if the message starts with the start string, then it was definitely directed at the bot.
             message_invokes_chatbot = True
-        elif self.user in message.mentions:
-            message_invokes_chatbot = True
+        elif message.reference:
+            # if the message replied to the bot, then it was directed at the bot.
+            try:
+                replied_message: discord.Message = await message.channel.fetch_message(message.reference.message_id)
+                if replied_message.author.id == self.user.id:
+                    message_invokes_chatbot = True
+            except (discord.NotFound, discord.HTTPException, discord.Forbidden) as exc:
+                print(exc)
+            character_replied_to = await self._get_character_replied_to(message)
+            if character_replied_to:
+                # check if this webhook represents a character that the chatbot adopted
+                message_invokes_chatbot = True
 
-        # if the message is part of a thread created by a chatbot command, we should respond
-        message_in_chatbot_thread: bool = False
-        if isinstance(message.channel, discord.Thread):
-            # TODO: deal with the case that the original message was deleted.
-            replied_message = await message.channel.parent.fetch_message(message.channel.id)
-            message_in_chatbot_thread = replied_message.content.startswith(COMMAND_START_STR)
- 
-        if not (message_invokes_chatbot or message_in_chatbot_thread):
+
+        if not message_invokes_chatbot:
             return
 
         # the message was meant for the bot and we must respond
@@ -93,10 +97,7 @@ class LLMClient(discord.Client):
             await message.add_reaction("⏳")
 
             # figure out where the parameters are so the bot can respond with the correct character or model
-            command: str = message.content
-            if message_in_chatbot_thread:
-                # the first message in a thread has the parameters for the conversation
-                command = replied_message.content
+            command: str = message.clean_content
 
             try:
                 args = self.parser.parse(command)
@@ -110,10 +111,7 @@ class LLMClient(discord.Client):
                 raise err
 
             # now, respond to the command appropriately.
-            if message_in_chatbot_thread:
-                await self.respond_to_chatbot_thread(args, message)
-            else:
-                await self.respond_to_command(args, message)
+            await self.respond_to_command(args, message)
 
             # let the user know that we successfully completed their task.
             await message.add_reaction("✅")
