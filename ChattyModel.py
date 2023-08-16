@@ -2,8 +2,45 @@ from pathlib import Path
 import yaml
 from typing import Optional
 import yaml
-from transformers import AutoTokenizer, pipeline, logging, TextGenerationPipeline
+from transformers import AutoTokenizer, pipeline, logging, TextGenerationPipeline, TextStreamer
 from auto_gptq import AutoGPTQForCausalLM, BaseQuantizeConfig
+import re
+
+from transformers import StoppingCriteria
+
+USERNAME_REGEX_PATTERN = "\n([^a-z\n])+:"
+
+class StopAtReply(StoppingCriteria):
+    """
+    Sometimes, the bot will try and predict what the user will say next,
+    and add it to the output. Users don't like being told what they are about to say,
+    so this stopping criteria ends the response if that happens.
+    """
+    def __init__(self, tokenizer: AutoTokenizer, prompt: str):
+        # self.target_sequence: str = target_sequence
+        self.tokenizer: AutoTokenizer = tokenizer
+        self.prompt = prompt
+
+    def __call__(self, input_ids, scores, **kwargs):
+        # Get the generated text as a string
+        generated_text = self.tokenizer.decode(input_ids[0])
+
+        # the generated text includes both the prompt and the new text,
+        # so remove the prompt
+        generated_text = generated_text.replace(self.prompt,'')
+
+        # Check if a username of the pattern \nNAME: appears in the generated text
+        if re.search(USERNAME_REGEX_PATTERN, generated_text) is not None:
+            print(f"Stopped generation for {generated_text}")
+            return True  # Stop generation
+
+        return False  # Continue generation
+
+    def __len__(self):
+        return 1
+
+    def __iter__(self):
+        yield self
 
 class ChattyModel:
     def __init__(self):
@@ -48,7 +85,7 @@ class ChattyModel:
             temperature: Optional[float]=None,
             top_p: Optional[float]=None,
             repetition_penalty: Optional[float]=None,
-            max_new_tokens: Optional[int]=None
+            max_new_tokens: Optional[int]=None,
         ) -> str:
         """
         Args:
@@ -72,13 +109,18 @@ class ChattyModel:
             temperature=temperature,
             top_p=top_p,
             repetition_penalty=repetition_penalty,
+            stopping_criteria=StopAtReply(self.tokenizer, prompt)
         )
 
         output = pipe(prompt, return_full_text=False)
-
-        # truncate for discord limits
-        # TODO: add logic to extend the character limit by posting multiple messages in a thread
         str_output = output[0]['generated_text']
+
+        # remove subsequent lines if it tried to generate the user's replies as well 
+        check_usernames_match: re.Match | None = re.search(USERNAME_REGEX_PATTERN, str_output)
+        if check_usernames_match is not None:
+            print(f"Removing {str_output[check_usernames_match.span()[0]:]}")
+            str_output = str_output[:check_usernames_match.span()[0]]
+
         return str_output
 
     def generate_from_character(self, prompt: str, character: str) -> str:
