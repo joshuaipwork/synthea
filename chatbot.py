@@ -22,6 +22,7 @@ class LLMClient(discord.Client):
     """
     model: ChattyModel = None
     parser: ChatbotParser = None
+    
     async def setup_hook(self):
         """
         When the bot is started and logs in, load the model.
@@ -36,6 +37,10 @@ class LLMClient(discord.Client):
         Reports to the console that we logged in.
         """
         print(f'Logged on as {self.user}!')
+        # TODO: There seems to be some issues 
+        with open("config.yaml", encoding='utf-8') as file:
+            config = yaml.safe_load(file)
+            await self.change_presence(activity=discord.Game(name=config['activity']))
 
     async def on_reaction_add(self, reaction: discord.Reaction, user):
         """
@@ -49,6 +54,10 @@ class LLMClient(discord.Client):
         # TODO: Don't delete messages if the webhook was made by someone else.
         if reaction.message.author.id == self.user.id:
             if (reaction.emoji == '🗑️'):
+                await reaction.message.delete()
+            if (reaction.emoji == '🔁'):
+                # regenerate the response.
+
                 await reaction.message.delete()
 
     async def on_message(self, message: discord.Message):
