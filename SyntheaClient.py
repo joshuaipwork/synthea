@@ -15,7 +15,7 @@ COMMAND_START_STR: str = '!syn '
 CHAR_LIMIT: int = 2000 # discord's character limit
 
 # This example requires the 'message_content' intent.
-class LLMClient(discord.Client):
+class SyntheaClient(discord.Client):
     """
     A discord client which recieves messages from users. When users send
     messages, the bot parses them and generates messages for them.

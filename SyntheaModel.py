@@ -29,6 +29,7 @@ class StopAtReply(StoppingCriteria):
             prompt_format (dict[str, str]): Format of the prompt.
             prompt (str): User's input.
         """
+        super()
         self.tokenizer: AutoTokenizer = tokenizer
         self.forbidden_strings = [
             prompt_format['user_message_tag'],

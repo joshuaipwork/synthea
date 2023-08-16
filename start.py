@@ -1,7 +1,7 @@
 import discord
 import argparse
 import json
-from chatbot import LLMClient
+from SyntheaClient import SyntheaClient
 
 with open('secrets.json', "r") as f:
     secrets = json.load(f)
@@ -12,5 +12,5 @@ with open('secrets.json', "r") as f:
     intents.presences = True
     intents.members = True
 
-    client = LLMClient(intents=intents)
+    client = SyntheaClient(intents=intents)
     client.run(secrets['client_token'])
