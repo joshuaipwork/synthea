@@ -172,16 +172,7 @@ class ContextManager:
         history_token_limit: int = self.seq_len - self.max_new_tokens - system_prompt_tokens
       
         # add the user's last message
-        user_tag: str = ""
-        if not isinstance(message.channel, discord.DMChannel) and message.author.nick:
-            # use the nickname, unless no nickname exists or we are in DMs
-            user_tag = message.author.nick
-        elif message.author.display_name:
-            user_tag = message.author.display_name
-        elif message.author.global_name:
-            user_tag = message.author.global_name
-        else:
-            user_tag = 'user'
+        user_tag: str = self._get_user_tag(message)
         user_tag = "_".join(user_tag.upper().split()) # make usernames into one word, maybe it will be less confusing
 
         text, added_tokens = self._get_text(message)
@@ -202,7 +193,40 @@ class ContextManager:
         final_prompt = "\n".join(reversed(history))
         return final_prompt
 
-    async def _follow_history(self, history: list[str], token_limit: int, history_iterator: AsyncIterator[discord.Message], token_count: int = 0):
+    async def _get_user_tag(self, message: discord.Message) -> str:
+        """
+        Returns the name of the user who sent this message.
+        
+        Args:
+            message (discord.Message): The message to retrieve the name of
+        Returns:
+            (str): A name for the user. This function prioritizes
+                nicknames over display names, display names over global names,
+                and global names over the deprecated names from before the username migration.
+                If none of the above, then 'USER' is used.
+        """
+        user_tag: str = ""
+        if not isinstance(message.channel, discord.DMChannel) and message.author.nick:
+            user_tag = message.author.nick
+        elif message.author.display_name:
+            user_tag = message.author.display_name
+        elif message.author.global_name:
+            user_tag = message.author.global_name
+        elif message.author.name:
+            user_tag = message.author.name
+        else:
+            user_tag = 'user'
+
+        return user_tag
+
+    async def _follow_history(
+            self,
+            history: list[str],
+            token_limit: int,
+            history_iterator: AsyncIterator[discord.Message],
+            token_count: int = 0,
+
+        ):
         """
         Iterates through history_iterator, retrieving .
 
@@ -226,12 +250,15 @@ class ContextManager:
 
             # update the prompt with this message
             if message.author.id == self.bot_user_id:
-                history.append(f"{self.bot_message_tag} {text}")
-            elif message.webhook_id:
-                user_tag = message.author.name if message.author.name else message.author.global_name
-                history.append(f"{user_tag.upper()}: {text}")
+                if message.embeds:
+                    # if the bot was speaking as a character, an embed is included with the character
+                    embed = message.embeds[0]
+                    character_name = embed.title.upper()
+                    history.append(f"{character_name}: {text}")
+                else:
+                    history.append(f"{self.bot_message_tag} {text}")
             else:
-                user_tag = message.author.nick if message.author.nick else message.author.global_name
+                user_tag: str = self._get_user_tag(message)
                 history.append(f"{user_tag.upper()}: {text}")
         
         return history
@@ -243,7 +270,10 @@ class ContextManager:
         Under most conditions, the text it returns will be message.content, however if it is a command
         for the bot, then only the prompt from that command will be returned.
         """
-        if message.content.startswith(self.config['command_start_str']):
+        # when the bot plays characters, it stores text in embeds rather than content
+        if message.author.id == self.bot_user_id and message.embeds:
+            text = message.embeds[0].description
+        elif message.content.startswith(self.config['command_start_str']):
             try:
                 args = ChatbotParser().parse(message.content)
                 text = args.prompt
