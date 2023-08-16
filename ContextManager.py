@@ -164,8 +164,7 @@ class ContextManager:
         history.append(f"{bot_message_tag} ")
         token_count += len(bot_message_tag) // self.EST_CHARS_PER_TOKEN
 
-        # history contains the most recent messages that were sent before the
-        # current message.
+        # history contains the most recent messages that were sent before the current message.
         system_prompt_tokens: int = len(system_prompt) // self.EST_CHARS_PER_TOKEN
         history_token_limit: int = self.seq_len - self.model.config['max_new_tokens'] - system_prompt_tokens
 
@@ -300,15 +299,15 @@ class ContextManager:
         # when the bot plays characters, it stores text in embeds rather than content
         if message.author.id == self.bot_user_id and message.embeds:
             text = message.embeds[0].description
-        elif message.content.startswith(self.config['command_start_str']):
+        elif message.clean_content.startswith(self.config['command_start_str']):
             try:
-                args = ChatbotParser().parse(message.content)
+                args = ChatbotParser().parse(message.clean_content)
                 text = args.prompt
             except (CommandError, ParserExitedException):
                 # if the command is invalid, just append the whole thing
-                text = message.content
+                text = message.clean_content
         else:
-            text = message.content
+            text = message.clean_content
 
         tokens = len(text) // self.EST_CHARS_PER_TOKEN
         return text, tokens
