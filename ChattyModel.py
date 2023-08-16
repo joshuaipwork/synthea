@@ -4,11 +4,8 @@ from typing import Optional
 import yaml
 from transformers import AutoTokenizer, pipeline, logging, TextGenerationPipeline, TextStreamer
 from auto_gptq import AutoGPTQForCausalLM, BaseQuantizeConfig
-import re
 
 from transformers import StoppingCriteria
-
-USERNAME_REGEX_PATTERN = "\n([^\n])+: "
 
 class StopAtReply(StoppingCriteria):
     """
@@ -123,12 +120,6 @@ class ChattyModel:
 
         output = pipe(prompt, return_full_text=False)
         str_output = output[0]['generated_text']
-
-        # remove subsequent lines if it tried to generate the user's replies as well 
-        check_usernames_match: re.Match | None = re.search(USERNAME_REGEX_PATTERN, str_output)
-        if check_usernames_match is not None:
-            print(f"Removing {str_output[check_usernames_match.span()[0]:]}")
-            str_output = str_output[:check_usernames_match.span()[0]]
 
         return str_output
 
