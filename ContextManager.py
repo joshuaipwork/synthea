@@ -102,30 +102,11 @@ class ContextManager:
         Messages outside of the reply chain are ignored.
 
         Args:
+            message (discord.Message): The last message from the user.
             character (str): The name of a character to use. If the character is specified, the character file will populate
                 the system prompt before user prompts are created.
         """
         history_iterator: ReplyChainIterator = ReplyChainIterator(message)
-        final_prompt = await self.compile_prompt(
-            message=message,
-            history_iterator=history_iterator,
-            character=character,
-        )
-        return final_prompt
-
-    async def compile_prompt_from_thread(
-            self,
-            message: discord.Message,
-            character: str | None=None
-        ):
-        """
-        Generates a prompt which includes the context from previous messages in a thread.
-
-        Args:
-            character (str): The name of a character to use. If a character is specified, the character file will populate
-                the system prompt before user prompts are created.
-        """
-        history_iterator: ThreadHistoryIterator = ThreadHistoryIterator(message)
         final_prompt = await self.compile_prompt(
             message=message,
             history_iterator=history_iterator,
@@ -143,6 +124,9 @@ class ContextManager:
         Generates a prompt which includes the context from previous messages from the history.
 
         Args:
+            message (discord.Message): The last message to add to the prompt.
+            history_iterator (ReplyChainIterator): An iterator that contains the chat history
+                to be included in the prompt.
             character (str): The name of a character to use. If the character is specified, the character file will populate
                 the system prompt before user prompts are created.
         """
@@ -195,7 +179,7 @@ class ContextManager:
         prompt and formats it into a header according to the model's prompt format.
 
         Args:
-            system_prompts (str): The system prompt of the 
+            system_prompts (str): The system prompt to use for the header.
         """
         template = self.model.format['header_template']
         result = template.replace('<|system_prompt|>', system_prompt)

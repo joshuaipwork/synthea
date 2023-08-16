@@ -129,8 +129,6 @@ class LLMClient(discord.Client):
         
         """
         character: str = args.character
-        create_thread: bool = args.thread
-        thread_name: str = args.thread_name
         prompt: str = args.prompt
 
         # if the user responded to the bot playing a character, respond as that character
@@ -158,42 +156,6 @@ class LLMClient(discord.Client):
             print(f'Generating for {message.author} with prompt: \n{prompt}')
             response = self.model.generate_from_defaults(prompt=prompt)
             await self.send_response_as_base(response, message, create_thread, thread_name)
-
-    async def respond_to_chatbot_thread(
-            self,
-            thread_args: argparse.Namespace,
-            message: discord.Message):
-        """
-        Respond to a thread started by a chatbot command.
-        Unlike regular conversations in a channel, the bot will read the context of a thread
-        and integrate it into its response.
-
-        thread_args (argparse.Namespace):
-        message (discord.Message):
-        """
-        character: str | None = thread_args.character
-
-        # retrieve previous entries in this thread for this conversation
-        context_manager: ContextManager = ContextManager(self.model, self.user.id)
-        prompt = await context_manager.compile_prompt_from_thread(
-            message=message,
-            character=character,
-        )
-
-        # generate a response and send it to the user.
-        if character:
-            print(f'Generating for {message.author} with char {character} on thread {message.channel} with prompt ({len(prompt)} chars):\n {prompt}')
-            response = self.model.generate_from_character(
-                prompt=prompt,
-                character=character
-            )
-            await self.send_response_as_character(response, character, message)
-        else:
-            print(f'Generating for {message.author} on thread {message.channel} with prompt {prompt}')
-            response = self.model.generate_from_defaults(
-                prompt=prompt
-            )
-            await self.send_response_as_base(response, message)
 
     async def send_response_as_base(self, response: str, message: discord.Message, create_thread: bool=False, thread_name: str=""):
         """
@@ -293,7 +255,6 @@ class LLMClient(discord.Client):
         if embed:
             await message_to_reply.reply(
                         mention_author=True,
-                        content=response_text,
                         embed=embed,
                         file=file
                     )
