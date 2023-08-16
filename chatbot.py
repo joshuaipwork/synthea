@@ -61,7 +61,7 @@ class LLMClient(discord.Client):
         if message.author == self.user:
             return
 
-        # # prevent bot from responding to any of its generated webhooks
+        # prevent bot from responding to any of its generated webhooks
         if message.webhook_id:
             return
 
@@ -76,11 +76,12 @@ class LLMClient(discord.Client):
                 replied_message: discord.Message = await message.channel.fetch_message(message.reference.message_id)
                 if replied_message.author.id == self.user.id:
                     message_invokes_chatbot = True
-                elif replied_message.webhook_id and self._get_character_from_webhook(replied_message):
-                    # check if this webhook represents a character that the chatbot adopted
-                    message_invokes_chatbot = True
             except (discord.NotFound, discord.HTTPException, discord.Forbidden) as exc:
                 print(exc)
+            character_replied_to = await self._get_character_replied_to(message)
+            if character_replied_to:
+                # check if this webhook represents a character that the chatbot adopted
+                message_invokes_chatbot = True
 
         # if the message is part of a thread created by a chatbot command, we should respond
         message_in_chatbot_thread: bool = False
@@ -139,6 +140,11 @@ class LLMClient(discord.Client):
         create_thread: bool = args.thread
         thread_name: str = args.thread_name
         prompt: str = args.prompt
+
+        # if the user responded to the bot playing a character, respond as that character
+        replied_character = await self._get_character_replied_to(message)
+        if replied_character:
+            character = replied_character
 
         # insert the user's prompt into the prompt template specified by the model
         context_manager: ContextManager = ContextManager(self.model, self.user.id)
@@ -310,21 +316,35 @@ class LLMClient(discord.Client):
                 raise ValueError("No message found to reply to!")
             msg_index += 1
 
-    def _get_character_from_webhook(self, message: discord.Message) -> str | None:
+    async def _get_character_replied_to(self, message: discord.Message) -> str | None:
         """
         Args:
             message (discord.Message)
         Returns:
-            If the message is from a webhook, returns the character's name. The name is the
-            name of the file which stores the character's information, as well as the string
+            If the message replied to a webhook representing a character adopted by the chatbot, 
+            returns the character's name. The name is the
+            filename of the file which stores the character's information, as well as the string
             used with the -c option to invoke the character through a command.
 
             Otherwise, returns None
         """
-        with open('guilds/character_mapping.yaml', mode='r', encoding='utf-8') as f:
-            char_mapping = yaml.safe_load(f)
-            if message.guild.id not in char_mapping:
+        if not message.reference:
+            return None
+            
+        try:
+            replied_message: discord.Message = await message.channel.fetch_message(message.reference.message_id)
+            if not replied_message.webhook_id:
                 return None
-            if message.author.name in char_mapping[message.guild.id]:
-                return char_mapping[message.guild.id][message.author.name]
+
+            with open('guilds/character_mapping.yaml', mode='r', encoding='utf-8') as file:
+                char_mapping = yaml.safe_load(file)
+                if replied_message.guild.id not in char_mapping:
+                    # the webhook isn't one from the bot
+                    return None
+                if replied_message.author.name in char_mapping[replied_message.guild.id]:
+                    # the webhook is from the bot, return the character name
+                    return char_mapping[message.guild.id][replied_message.author.name]
+        except (discord.NotFound, discord.HTTPException, discord.Forbidden) as exc:
+            print(exc)
+        
         return None
