@@ -3,12 +3,44 @@
 Generate a prompt for the AI to respond to, given the
 message history and persona.
 """
-from typing import Optional
+from typing import AsyncIterator, Optional
 import discord
 import yaml
 from ChattyModel import ChattyModel
 
 from CommandParser import ChatbotParser, CommandError, ParserExitedException
+
+class ThreadHistoryIterator:
+    """
+    An async iterator which follow replies in a thread until it reaches the oldest message
+    in the thread. Unlike discord.Thread.history(), this iterator will parse commands into
+
+    """
+
+class ReplyChainIterator:
+    """
+    An async iterator which follows a chain of discord message replies until it reaches the end
+    or fails to capture the last message.
+    """
+    def __init__(self, starting_message: discord.Message):
+        self.message = starting_message
+
+    def __aiter__(self):
+        return self
+    
+    async def __anext__(self):
+        # go back message-by-message through the reply chain and add it to the context
+        if self.message.reference:
+            try:
+                self.message = await self.message.channel.fetch_message(self.message.reference.message_id)
+                return self.message
+
+            except (discord.NotFound, discord.HTTPException, discord.Forbidden):
+                # the user may have deleted their message
+                # either way, we can't follow the history anymore
+                raise StopAsyncIteration
+        else:
+            raise StopAsyncIteration
 
 class ContextManager:
     """
@@ -54,12 +86,14 @@ class ContextManager:
             with open(f"characters/{character}.yaml", 'r', encoding='utf-8') as f:
                 char_chat_config = yaml.safe_load(f)
                 system_prompt = char_chat_config['system_prompt']
+                bot_message_tag = char_chat_config['bot_message_tag']
         else:
+            bot_message_tag = self.bot_message_tag
             system_prompt = self.model.config['system_prompt']
 
         # add the bot role tag so the AI knows to continue from this point.
-        prompt.append(self.bot_message_tag)
-        token_count += len(self.bot_message_tag) // self.EST_CHARS_PER_TOKEN
+        prompt.append(bot_message_tag)
+        token_count += len(bot_message_tag) // self.EST_CHARS_PER_TOKEN
 
         # history contains the most recent messages that were sent before the
         # current message.
@@ -67,9 +101,17 @@ class ContextManager:
         history_token_limit: int = self.seq_len - self.max_new_tokens - system_prompt_tokens
       
         # add the user's last message
-        user_tag = message.author.nick if message.author.nick else message.author.global_name
-        prompt.append(f"{user_tag.upper()}: {message.content}")
-        token_count += len(prompt[-1]) // self.EST_CHARS_PER_TOKEN
+        user_tag: str = ""
+        if not isinstance(message.channel, discord.DMChannel) and message.author.nick:
+            # use the nickname, unless no nickname exists or we are in DMs
+            user_tag = message.author.nick
+        else:
+            user_tag = message.author.global_name
+        user_tag = "_".join(user_tag.upper().split()) # make usernames into one word, maybe it will be less confusing
+
+        text, added_tokens = self._get_text(message)
+        prompt.append(f"{user_tag.upper()}: {text}")
+        token_count += added_tokens
 
         # go back message-by-message through the reply chain and add it to the context
         while message.reference:
@@ -93,7 +135,7 @@ class ContextManager:
 
             # update the prompt with this message
             if message.webhook_id or message.author.id == bot_user_id:
-                prompt.append(f"{self.bot_message_tag} {text}")
+                prompt.append(f"{bot_message_tag} {text}")
             else:
                 user_tag = message.author.nick if message.author.nick else message.author.global_name
                 prompt.append(f"{user_tag.upper()}: {text}")
@@ -106,6 +148,117 @@ class ContextManager:
         # convert the list into a single string
         final_prompt = "\n".join(reversed(prompt))
         return final_prompt
+
+    async def compile_prompt(self, message: discord.Message, bot_user_id: str, character: Optional[str]=None):
+        """
+        Generates a prompt which includes the context from previous messages from the history.
+
+        Args:
+            character (str): The name of a character to use. If the character is specified, the character file will populate
+                the system prompt before user prompts are created.
+        """
+        # pieces of the prompts are appended to the list then assembled in reverse order into the final prompt
+        prompt: list[str] = []
+        token_count: int = 0
+
+        system_prompt: str = ""
+        if character:
+            with open(f"characters/{character}.yaml", 'r', encoding='utf-8') as f:
+                char_chat_config = yaml.safe_load(f)
+                system_prompt = char_chat_config['system_prompt']
+                bot_message_tag = char_chat_config['bot_message_tag']
+        else:
+            bot_message_tag = self.bot_message_tag
+            system_prompt = self.model.config['system_prompt']
+
+        # add the bot role tag so the AI knows to continue from this point.
+        prompt.append(bot_message_tag)
+        token_count += len(bot_message_tag) // self.EST_CHARS_PER_TOKEN
+
+        # history contains the most recent messages that were sent before the
+        # current message.
+        system_prompt_tokens: int = len(self.system_prompt) // self.EST_CHARS_PER_TOKEN
+        history_token_limit: int = self.seq_len - self.max_new_tokens - system_prompt_tokens
+      
+        # add the user's last message
+        user_tag: str = ""
+        if not isinstance(message.channel, discord.DMChannel) and message.author.nick:
+            # use the nickname, unless no nickname exists or we are in DMs
+            user_tag = message.author.nick
+        else:
+            user_tag = message.author.global_name
+        user_tag = "_".join(user_tag.upper().split()) # make usernames into one word, maybe it will be less confusing
+
+        text, added_tokens = self._get_text(message)
+        prompt.append(f"{user_tag.upper()}: {text}")
+        token_count += added_tokens
+
+        # go back message-by-message through the reply chain and add it to the context
+        while message.reference:
+            try:
+                message = await message.channel.fetch_message(message.reference.message_id)
+            except discord.NotFound:
+                # the user may have deleted their message
+                break
+
+            # some messages in the chain may be commands for the bot
+            # if so, parse only the prompt in each command in order to not confuse the bot
+            text, added_tokens = self._get_text(message)
+
+            # don't include empty messages so the bot doesn't get confused.
+            if not text:
+                break
+
+            # stop retrieving context if the context would overflow
+            if added_tokens + token_count > history_token_limit:
+                break
+
+            # update the prompt with this message
+            if message.webhook_id or message.author.id == bot_user_id:
+                prompt.append(f"{bot_message_tag} {text}")
+            else:
+                user_tag = message.author.nick if message.author.nick else message.author.global_name
+                prompt.append(f"{user_tag.upper()}: {text}")
+            
+            token_count += added_tokens
+
+        # the system prompt to the beginning of the prompt
+        prompt.append(system_prompt)
+
+        # convert the list into a single string
+        final_prompt = "\n".join(reversed(prompt))
+        return final_prompt
+
+    async def _follow_history(self, history: list[str], token_limit: int, history_iterator: AsyncIterator[discord.Message], bot_user_id: int, token_count: int = 0):
+        """
+        Iterates through history_iterator, retrieving .
+
+        If it is a message by a webhook or a bot, it 
+
+        Returns:
+            history (list of str): A list of , in order of most recent to oldest messages in the history. 
+        """
+        history = []
+
+        async for message in history_iterator:
+            # some messages in the chain may be commands for the bot
+            # if so, parse only the prompt in each command in order to not confuse the bot
+            text, added_tokens = self._get_text(message)
+
+            # don't include empty messages so the bot doesn't get confused.
+            if not text:
+                break
+
+            # stop retrieving context if the context would overflow
+            if added_tokens + token_count > token_limit:
+                break
+
+            # update the prompt with this message
+            if message.webhook_id or message.author.id == bot_user_id:
+                prompt.append(f"{bot_message_tag} {text}")
+            else:
+                user_tag = message.author.nick if message.author.nick else message.author.global_name
+                prompt.append(f"{user_tag.upper()}: {text}")
 
     def _get_text(self, message: discord.Message):
         """
