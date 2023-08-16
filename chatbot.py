@@ -174,7 +174,7 @@ class LLMClient(discord.Client):
         Sends the given response in the same channel as the given message while
         using the picture and name associated with the character.
 
-        response (str): The response to be 
+        response (str): The response to be sent
         """
         with open(f'characters/{character}.yaml', "r", encoding='utf-8') as f:
             char_config = yaml.safe_load(f)
@@ -190,19 +190,13 @@ class LLMClient(discord.Client):
             # TODO: Add local file upload options.
             file: Optional[discord.File] = None
             if 'avatar' in char_config:
-            #     file = discord.File(f"avatars/{char_config['avatar']}", filename="avatar.png")
-                # embed.set_thumbnail(url=f"attachment://avatar.png")
                 embed.set_thumbnail(url=char_config['avatar'])
-
-            # if this message was in a thread, figure out which thread it was
-            thread: discord.Thread | None = None
 
             # send the messages
             await self.send_response(
                 response_text=response,
                 embed=embed,
                 file=file,
-                thread=thread,
                 message_to_reply=message,
             )
 
@@ -212,7 +206,6 @@ class LLMClient(discord.Client):
             response_text: Optional[str]=None,
             embed: Optional[discord.Embed]=None,
             file: Optional[discord.Embed]=None,
-            thread: Optional[discord.Thread]=None
         ):
         """
         Sends a response, splitting it up into multiple messages if required
@@ -246,25 +239,7 @@ class LLMClient(discord.Client):
 
         while msg_index * CHAR_LIMIT < len(response_text):
             message_text = response_text[msg_index * CHAR_LIMIT:(msg_index + 1) * CHAR_LIMIT]
-            if message_to_reply and isinstance(message_to_reply.channel, discord.DMChannel):
-                # TODO: remove duplicate code
-                if msg_index == 0:
-                    last_message = await message_to_reply.reply(
-                        message_text,
-                        mention_author=True,
-                        embed=embed
-                    )
-                else:
-                    last_message = await last_message.reply(
-                        message_text,
-                        mention_author=False,
-                        embed=embed
-                    )
-            elif thread:
-                # It doesn't seem like you can send a message to a thread and reply at the same time
-                # TODO: Spend more time verifying that this is the case
-                await thread.send(message_text)
-            elif message_to_reply:
+            if message_to_reply:
                 # a message in a channel
                 # only reply to the first message to prevent spamming
                 if msg_index == 0:
