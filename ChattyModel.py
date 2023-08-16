@@ -3,7 +3,11 @@ import yaml
 from typing import Optional
 import yaml
 from transformers import AutoTokenizer, pipeline, logging, TextGenerationPipeline, TextStreamer
-from auto_gptq import AutoGPTQForCausalLM, BaseQuantizeConfig
+from exllama.model import ExLlama, ExLlamaCache, ExLlamaConfig
+from exllama.tokenizer import ExLlamaTokenizer
+from exllama.generator import ExLlamaGenerator
+import os, glob
+
 
 from transformers import StoppingCriteria
 
@@ -48,32 +52,50 @@ class ChattyModel:
         with open(f"formats/{self.config['format']}.yaml", "r", encoding="utf-8") as file:
             self.format = yaml.safe_load(file)
         self.tokenizer = None
-        self.model = None
-    
-    def load_model(self):
-        """
-        Loads the model 
-        """
-        # TODO: Add functionality to select the model
-        use_triton = False
-        self.tokenizer = AutoTokenizer.from_pretrained(
-            self.config['model_name_or_path'],
-            use_fast=True,
-            add_special_tokens=True,
-        )
-        self.model = AutoGPTQForCausalLM.from_quantized(
-            self.config['model_name_or_path'],
-            model_basename=self.config['model_basename'],
-            use_safetensors=True,
-            trust_remote_code=True,
-            device_map='auto',
-            use_triton=use_triton,
-            quantize_config=None,
-        )
+        self.model_config = None
+        self.generator = None
 
-        self.model.seqlen = self.config["seqlen"]
+    def load_model(self, hf_model_dir: Optional[str]=None):
+        """
+        Loads a model from a local directory. The local directory is in the models/
+        folder, and is named according to the huggingface model repo to which the
+        model belongs. For a model to be loadable, tokenizer.model, config.json,
+        and the *.safetensors version of the model must be in the local directory.
 
-        # Inference can also be done using transformers' pipeline
+        Args:
+            hf_model_dir (str or None): The huggingface repo from which the model
+                was originally downloaded. This is also the directory with in the /models
+                folder to which the model was downloaded.
+        """
+        # Directory containing model, tokenizer, generator
+        if not hf_model_dir:
+            hf_model_dir = self.config['model_name_or_path']
+
+        local_model_dir =  os.path.join("./models", hf_model_dir)
+            
+
+        # Locate files we need within that directory
+        tokenizer_path = os.path.join(local_model_dir, "tokenizer.model")
+        print(tokenizer_path)
+        model_config_path = os.path.join(local_model_dir, "config.json")
+        print(model_config_path)
+        st_pattern = os.path.join(local_model_dir, "*.safetensors")
+        print(st_pattern)
+        model_path = glob.glob(st_pattern)[0]
+
+        # Create config, model, tokenizer and generator
+
+        self.model_config = ExLlamaConfig(model_config_path)               # create config from config.json
+        self.model_config.model_path = model_path                          # supply path to model weights file
+
+        hf_model_dir = ExLlama(self.model_config)                    # create ExLlama instance and load the weights
+        self.tokenizer = ExLlamaTokenizer(tokenizer_path)            # create tokenizer from tokenizer model file
+        cache = ExLlamaCache(hf_model_dir)
+        self.generator = ExLlamaGenerator(
+            hf_model_dir,
+            self.tokenizer,
+            cache
+        )
 
         # Prevent printing spurious transformers error when using pipeline with AutoGPTQ
         logging.set_verbosity(logging.CRITICAL)
@@ -90,36 +112,42 @@ class ChattyModel:
             prompt: str,
             temperature: Optional[float]=None,
             top_p: Optional[float]=None,
+            top_k: Optional[float]=None,
             repetition_penalty: Optional[float]=None,
             max_new_tokens: Optional[int]=None,
         ) -> str:
         """
+        Generates text from the model using exllama.
+
         Args:
             prompt (str): The prompt to feed to the AI.
         """
+        # if generation parameters were not specified, use defaults from the model
         if not temperature:
             temperature = self.config['default_temperature']
         if not top_p:
             top_p = self.config['default_top_p']
+        if not top_k:
+            top_k = self.config['default_top_k']
         if not repetition_penalty:
             repetition_penalty = self.config['default_repetition_penalty']
         if not max_new_tokens:
             max_new_tokens = self.config['max_new_tokens']
 
-        pipe: TextGenerationPipeline = pipeline(
-            "text-generation",
-            model=self.model,
-            tokenizer=self.tokenizer,
-            min_new_tokens=1,
-            max_new_tokens=max_new_tokens,
-            temperature=temperature,
-            top_p=top_p,
-            repetition_penalty=repetition_penalty,
-            stopping_criteria=StopAtReply(self.tokenizer, self.format, prompt)
+        # Update generator with configuration from character and model config
+
+        # self.generator.disallow_tokens([self.tokenizer.eos_token_id])
+        self.generator.settings.token_repetition_penalty_max = repetition_penalty
+        self.generator.settings.temperature = temperature
+        self.generator.settings.top_p = top_p
+        self.generator.settings.top_k = top_k
+
+        output = self.generator.generate_simple(
+            prompt,
+            max_new_tokens=max_new_tokens
         )
 
-        output = pipe(prompt, return_full_text=False)
-        str_output = output[0]['generated_text']
+        str_output = output[len(prompt):]
 
         return str_output
 
