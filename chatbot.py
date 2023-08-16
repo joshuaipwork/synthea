@@ -44,7 +44,7 @@ class LLMClient(discord.Client):
         if (reaction.message.webhook_id or reaction.message.author.id == self.user.id):
             print(reaction)
             if (reaction.emoji == '🗑️'):
-                reaction.message.delete()
+                await reaction.message.delete()
 
     async def on_message(self, message: discord.Message):
         """
@@ -161,18 +161,11 @@ class LLMClient(discord.Client):
         """
         character: str | None = thread_args.character
 
-        # retrieve the character's background information
-        starter: str = ""
-        if character:
-            with open(f'characters/{character}.yaml', "r", encoding='utf-8') as f:
-                char_config = yaml.safe_load(f)
-                starter = char_config['starter']
-
         # retrieve previous entries in this thread for this conversation
         context_manager: ContextManager = ContextManager(self.model)
         prompt = await context_manager.compile_prompt_from_chat(
             message=message,
-            starter=starter,
+            character=character,
             bot_user_id=self.user.id,
         )
 

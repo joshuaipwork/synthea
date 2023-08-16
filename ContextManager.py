@@ -12,7 +12,7 @@ from CommandParser import ChatbotParser
 
 class ContextManager:
     """
-    Purpose: When the AI .
+    Formats prompts for the bot to generate from.
     """
     # A rough measure of how many character are in each token.
     EST_CHARS_PER_TOKEN = 3
@@ -32,6 +32,7 @@ class ContextManager:
         self.user_message_tag: str = self.model.config['user_message_tag']
         self.bot_message_tag: str = self.model.config['bot_message_tag']
         self.system_prompt: str = self.model.config['system_prompt']
+        self.bot_name: str = self.model.config['bot_name']
 
     def compile_prompt_from_text(self, text: str):
         """
@@ -52,7 +53,7 @@ class ContextManager:
 
         return prompt
 
-    async def compile_prompt_from_chat(self, message: discord.Message, bot_user_id: int, character: str="", starter=""):
+    async def compile_prompt_from_chat(self, message: discord.Message, bot_user_id: int, character: str | None=None):
         """
         Generates a prompt which includes the context from previous messages.
 
@@ -61,6 +62,16 @@ class ContextManager:
                 Use this to add instructions that should guide the rest of the chat, and should apply to the prompt regardless
                 of what is posted in the context.
         """
+
+        starter: str = ""
+        if character:
+            with open(f"characters/{character}.yaml", 'r', encoding='utf-8') as f:
+                char_chat_config = yaml.safe_load(f)
+                starter = char_chat_config['starter']
+        else:
+            with open("characters/default.yaml", 'r', encoding='utf-8') as f:
+                default_chat_config = yaml.safe_load(f)
+                starter = default_chat_config['starter']
 
         thread: discord.Thread = message.channel
 
@@ -74,12 +85,14 @@ class ContextManager:
         token_count: int = 0
         prompt: list[str] = []
 
-        # add the bot role tag so the AI knows to continue from this point.
+        # # add the bot role tag so the AI knows to continue from this point.
         prompt.append(self.bot_message_tag)
+        prompt.append(f"{self.bot_name}: ")
 
         # go back message-by-message through the thread and add it to the context
         async for thread_message in thread.history(limit=20):
             # if it is the first message in the thread, exclude the weird commands and only add the prompt
+            print(thread_message)
             if thread_message.id == thread.id:
                 # have to do this because of weird handling on discord's end of first thread comments
                 thread_message = await thread.parent.fetch_message(thread.id)
@@ -88,7 +101,7 @@ class ContextManager:
             else:
                 content = thread_message.content
 
-            # empty messages? why
+            # don't add empty messages since that will confuse the bot
             if not content:
                 continue
 
@@ -100,26 +113,28 @@ class ContextManager:
 
             # check if the message was sent by me or a webhook
             if thread_message.webhook_id or thread_message.author.id == bot_user_id:
-                prompt.append(f"{self.bot_message_tag} {content}")
+                prompt.append(f"{self.bot_name}: {content}")
             else:
-                prompt.append(f"{self.user_message_tag} {content}")
+                user_name = thread_message.author.nick if thread_message.author.nick else thread_message.author.global_name
+                prompt.append(f"{user_name}: {content}")
 
         # USER: Guidelines for the chat
-        # ASSISTANT: 
+        # ASSISTANT:
         # user_1: Thing that user 1 said
         # bot_name: Thing that bot responded with
         # user_1: Thing that user 1 said
-        # bot_name: 
-        prompt.append(self.bot_message_tag)
+        # bot_name:
+        # prompt.append(self.bot_message_tag)
         # prompt[-1] = self.bot_message_tag + prompt[-1]
 
         # add the starter to the beginning of the prompt
-        prompt.append(self.user_message_tag + starter)
+        prompt.append("")
+        prompt.append(f"{self.user_message_tag} {starter}")
 
         # add the system prompt expected by the template to the beginning of the prompt
         prompt.append(self.system_prompt)
 
-        print(prompt)
+        # print(prompt)
         # convert the list into a single string
         final_prompt = "\n".join(reversed(prompt))
         return final_prompt
