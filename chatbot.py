@@ -74,18 +74,8 @@ class LLMClient(discord.Client):
         if message.content.startswith(COMMAND_START_STR):
             # if the message starts with the start string, then it was definitely directed at the bot.
             message_invokes_chatbot = True
-        elif message.reference:
-            # if the message replied to the bot, then it was directed at the bot.
-            try:
-                replied_message: discord.Message = await message.channel.fetch_message(message.reference.message_id)
-                if replied_message.author.id == self.user.id:
-                    message_invokes_chatbot = True
-            except (discord.NotFound, discord.HTTPException, discord.Forbidden) as exc:
-                print(exc)
-            character_replied_to = await self._get_character_replied_to(message)
-            if character_replied_to:
-                # check if this webhook represents a character that the chatbot adopted
-                message_invokes_chatbot = True
+        elif self.user in message.mentions:
+            message_invokes_chatbot = True
 
         # if the message is part of a thread created by a chatbot command, we should respond
         message_in_chatbot_thread: bool = False
