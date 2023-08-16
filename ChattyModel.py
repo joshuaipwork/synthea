@@ -69,7 +69,7 @@ class ChattyModel:
 
         # truncate for discord limits
         # TODO: add logic to extend the character limit by posting multiple messages in a thread
-        str_output = output[0]['generated_text'][:2000]
+        str_output = output[0]['generated_text']
         return str_output
 
     def generate_from_character(self, prompt: str, character: str) -> str:
