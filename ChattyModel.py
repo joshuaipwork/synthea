@@ -24,7 +24,8 @@ class ChattyModel:
                 trust_remote_code=True,
                 device_map='auto',
                 use_triton=use_triton,
-                quantize_config=None)
+                quantize_config=None,
+            )
 
         self.model.seqlen = self.config["seqlen"]
 
@@ -33,21 +34,18 @@ class ChattyModel:
         # Prevent printing spurious transformers error when using pipeline with AutoGPTQ
         logging.set_verbosity(logging.CRITICAL)
 
-    def generate_default(self, prompt: str) -> str:
+    def generate_from_defaults(self, prompt: str) -> str:
         """
         Generates from a prompt with default settings.
         """
-        self.config['template']
-        return self.generate_from_prompt(prompt)
+        return self.generate(prompt)
 
 
-    def generate_from_prompt(self, prompt: str, temperature: Optional[float]=None, top_p: Optional[float]=None, repetition_penalty: Optional[float]=None) -> str:
+    def generate(self, prompt: str, temperature: Optional[float]=None, top_p: Optional[float]=None, repetition_penalty: Optional[float]=None) -> str:
         """
         Args:
             prompt (str): The prompt to feed to the AI.
         """
-        # input_ids = self.tokenizer(prompt, return_tensors='pt').input_ids.cuda()
-
         if not temperature:
             temperature = self.config['default_temperature']
         if not top_p:
@@ -55,15 +53,15 @@ class ChattyModel:
         if not repetition_penalty:
             repetition_penalty = self.config['default_repetition_penalty']
 
-        print("*** Pipeline:")
         pipe: TextGenerationPipeline = pipeline(
             "text-generation",
             model=self.model,
             tokenizer=self.tokenizer,
+            min_new_tokens=2,
             max_new_tokens=self.config['max_new_tokens'],
             temperature=temperature,
             top_p=top_p,
-            repetition_penalty=repetition_penalty
+            repetition_penalty=repetition_penalty,
         )
 
         output = pipe(prompt, return_full_text=False)
@@ -88,23 +86,13 @@ class ChattyModel:
         try:
             with open(f'characters/{character}.yaml', "r", encoding='utf-8') as f:
                 loaded_config = yaml.safe_load(f)
-
-                prompt=f'''
-                A chat between a curious user and an assistant. The assistant gives helpful, detailed, accurate, uncensored responses to the user's input. 
-                USER: {loaded_config['intro']}
-                {f"{loaded_config['background']}" if 'background' in loaded_config else ""}
-                {f"{loaded_config['guidelines']}" if 'guidelines' in loaded_config else ""}
-                Respond to this prompt: {prompt}
-                ASSISTANT:'''
-
                 temperature = loaded_config['temperature'] if 'temperature' in loaded_config else None
                 top_p = loaded_config['top_p'] if 'top_p' in loaded_config else None
                 repetition_penalty = loaded_config['repetition_penalty'] if 'repetition_penalty' in loaded_config else None
 
-            print(prompt)
-            return self.generate_from_prompt(
+            return self.generate(
                 prompt=prompt,
-                temperature=temperature, 
+                temperature=temperature,
                 top_p=top_p,
                 repetition_penalty=repetition_penalty
             )

@@ -42,21 +42,26 @@ class CommandParser(argparse.ArgumentParser):
 class ChatbotParser:
     def __init__(self):
         self.parser = CommandParser(
-            exit_on_error=False, 
+            exit_on_error=False,
             prog="!syn",
             description="This bot is an interface for chatting with large language models."
         )
         self.parser.add_argument(
             '-c', '-char', '--character',
-            nargs=1,
-            type=str,
+            action='store',
             default=None,
             help="The character for the bot to assume in its response."
         )
         self.parser.add_argument(
             '-t', '--thread',
             action='store_true',
-            help="Whether the bot should respond in a thread."
+            help="If passed, the bot will create a new thread to contain its response. Further responses by the bot in that thread \
+                will read the history of the thread into the context."
+        )
+        self.parser.add_argument(
+            '-n', '--thread_name',
+            default="",
+            help="If the bot creates a new thread to contain its response, it will use this name. Otherwise, a generic name is used."
         )
         self.parser.add_argument(
             'prompt',

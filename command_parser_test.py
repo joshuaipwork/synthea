@@ -2,7 +2,7 @@ from CommandParser import ChatbotParser, CommandParser
 
 parser = ChatbotParser()
 
-string = "!syn -h"
+string = "!syn help me "
 
 try:
     args = parser.parse(string[5:])

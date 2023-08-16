@@ -2,6 +2,7 @@
 The discord client which contains the bulk of the logic for the chatbot.
 """
 import argparse
+import traceback
 import discord
 import yaml
 
@@ -30,15 +31,20 @@ class LLMClient(discord.Client):
         """
         print(f'Logged on as {self.user}!')
 
-    async def on_reaction_add(self, reaction, user):
+    async def on_reaction_add(self, reaction: discord.Reaction, user):
         """
         Enables the bot to take a variety of actions when its posts are reacted to
 
-        [❌] will tell the bot to delete its own post
+        [🗑️] will tell the bot to delete its own post
         [▶️] will tell the bot to continue from this post
         """
-        # TODO: add this functionality
         # TODO: make the bot add reactions as buttons on its own post
+        # TODO: Figure out how to distinguish webhooks made by me from webhooks made by someone else
+        # TODO: Don't delete messages if the webhook was made by someone else.
+        if (reaction.message.webhook_id or reaction.message.author.id == self.user.id):
+            print(reaction)
+            if (reaction.emoji == '🗑️'):
+                reaction.message.delete()
 
     async def on_message(self, message: discord.Message):
         """
@@ -63,9 +69,11 @@ class LLMClient(discord.Client):
         message_invokes_chatbot: bool = message.content.startswith(COMMAND_START_STR)
 
         # if the message is part of a thread created by a chatbot command, we should respond
+        message_in_chatbot_thread: bool = False
         if isinstance(message.channel, discord.Thread):
-            thread_start_message: discord.Message = await message.channel.fetch_message(message.channel.id)
-            message_in_chatbot_thread: discord.Message = thread_start_message.content.startswith(COMMAND_START_STR)
+            # TODO: deal with the case that the original message was deleted.
+            thread_start_message = await message.channel.parent.fetch_message(message.channel.id)
+            message_in_chatbot_thread = thread_start_message.content.startswith(COMMAND_START_STR)
  
         if not (message_invokes_chatbot or message_in_chatbot_thread):
             return
@@ -86,7 +94,7 @@ class LLMClient(discord.Client):
             except ParserExitedException as err:
                 # If the parser exits prematurely without encountering an error, this indicates that the user
                 # invoked the help action. Show them that help text and mark the command as successfully responded.
-                await message.reply(str(err), mention_author=True)
+                await message.reply(f'```{err}```', mention_author=True)
                 return
             except CommandError as err:
                 # for other types of error, show them the error and mark the command as failed.
@@ -103,6 +111,7 @@ class LLMClient(discord.Client):
         except Exception as err:
             # let the user know that something went wrong
             await message.add_reaction("❌")
+            traceback.print_exc(limit=4)
             await message.reply(str(err), mention_author=True)
         finally:
             # let the user know that the bot is done with their command.
@@ -113,40 +122,39 @@ class LLMClient(discord.Client):
         
         """
         character: str = args.character
-        prompt: str = " ".join(args.prompt)
+        create_thread: bool = args.thread
+        thread_name: str = args.thread_name
+        text: str = " ".join(args.prompt)
 
         # insert the user's prompt into the prompt template specified by the model
-        prompt = "\n".join(self.model.config[''])
+        context_manager: ContextManager = ContextManager(self.model)
 
         # generate a response and send it to the user.
         if character:
-            print(f'Generating with char {character} and prompt {prompt} for {message.author}')
+            prompt = context_manager.compile_prompt_from_character(
+                text=text,
+                character=character
+            )
+            
+            print(f'Generating for {message.author} with char {character} and prompt: \n{prompt}')
+        
             response = self.model.generate_from_character(
                 prompt=prompt,
                 character=character
             )
-            print(response)
-            await self.send_response_as_character(response, character, message)
+            await self.send_response_as_character(response, character, message, create_thread)
         else:
-            print(f'Generating with prompt {prompt} for {message.author}')
-            response = self.model.generate_default(
-                prompt=prompt
-            )
-            print(response)
-            await self.send_response_as_base(response, message)       
-
-    async def send_response_as_base(self, prompt, message):
-        """
-        Sends a simple response using the base template of the model.
-        """
-        print(f'Generating with prompt {prompt} for from {message.author}')
-        output = self.model.generate_default(prompt)
-        print(output)
-        await message.reply(output, mention_author=True)
+            prompt = context_manager.compile_prompt_from_text(text=text)
+            
+            print(f'Generating for {message.author} with prompt: \n{prompt}')
+            
+            response = self.model.generate_from_defaults(prompt=prompt)
+            await self.send_response_as_base(response, message, create_thread, thread_name)
+        print(f'Response:\n{response}')
 
     async def respond_to_chatbot_thread(
-            self, 
-            thread_args: argparse.Namespace, 
+            self,
+            thread_args: argparse.Namespace,
             message: discord.Message):
         """
         When responding to a thread, 
@@ -161,35 +169,44 @@ class LLMClient(discord.Client):
                 starter = char_config['starter']
 
         # retrieve previous entries in this thread for this conversation
-        context_manager: ContextManager = ContextManager()
-        prompt = await context_manager.compile_prompt_from_context(
-            seq_len=self.model.config['seq_len'],
-            max_new_tokens=self.model.config['max_new_tokens'],
-            user_role_tag=self.model.config['user_role_tag'],
-            bot_role_tag=self.model.config['bot_role_tag'],
-            intro=self.model.config['intro'],
+        context_manager: ContextManager = ContextManager(self.model)
+        prompt = await context_manager.compile_prompt_from_chat(
             message=message,
             starter=starter,
+            bot_user_id=self.user.id,
         )
 
         # generate a response and send it to the user.
         if character:
-            print(f'Generating with char {character} on thread {message.channel} with prompt {message.content} for {message.author}')
+            print(f'Generating for {message.author} with char {character} on thread {message.channel} with prompt {prompt}')
             response = self.model.generate_from_character(
                 prompt=prompt,
                 character=character
             )
-            print(response)
             await self.send_response_as_character(response, character, message)
         else:
-            print(f'Generating on thread {message.channel} with prompt {message.content} for {message.author}')
-            response = self.model.generate_default(
+            print(f'Generating for {message.author} on thread {message.channel} with prompt {prompt}')
+            response = self.model.generate_from_defaults(
                 prompt=prompt
             )
-            print(response)
             await self.send_response_as_base(response, message)
+        print(f'Response:\n{response}')
 
-    async def send_response_as_character(self, response: str, character: str, message: discord.Message):
+    async def send_response_as_base(self, response: str, message: discord.Message, create_thread: bool=False, thread_name: str=""):
+        """
+        Sends a simple response using the base template of the model.
+        If create_thread is True, then a new thread will be created with
+        the specified name.
+        """
+        if create_thread:
+            if not thread_name:
+                thread_name = f"AI chat with {message.author}"
+            thread = await message.create_thread(name=thread_name)
+            await thread.send(response)
+        else:
+            await message.reply(response, mention_author=True)
+
+    async def send_response_as_character(self, response: str, character: str, message: discord.Message, create_thread: bool=False, thread_name: str=""):
         """
         Sends the given response in the same channel as the given message while
         using the picture and name associated with the character.
@@ -204,14 +221,26 @@ class LLMClient(discord.Client):
             else:
                 avatar = None
 
-            webhook: discord.Webhook = await message.channel.create_webhook(
+            webhook_target = message.channel
+            if isinstance(message.channel, discord.Thread):
+                webhook_target = message.channel.parent
+
+            webhook: discord.Webhook = await webhook_target.create_webhook(
                 name=loaded_config['name'],
                 avatar=avatar,
                 reason="Chatbot character"
             )
 
             # send the message via its character
-            await webhook.send(response)
+            if create_thread:
+                if not thread_name:
+                    thread_name = f"{message.author}\'s chat with {character}"
+                thread = await message.create_thread(name=thread_name)
+                await webhook.send(response, thread=thread)
+            elif isinstance(message.channel, discord.Thread):
+                await webhook.send(response, thread=message.channel)
+            else:
+                await webhook.send(response)
 
             # remove the webhook once done
             await webhook.delete()
