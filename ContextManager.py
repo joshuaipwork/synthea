@@ -152,7 +152,7 @@ class ContextManager:
 
         system_prompt: str = ""
         bot_message_tag = self.model.format['bot_message_tag']
-        system_prompt = self.model.config['system_prompt']
+        system_prompt = self.config['system_prompt']
 
         # if the character has a special system prompt, override the default model system prompt
         if character:
@@ -252,9 +252,8 @@ class ContextManager:
 
         ):
         """
-        Iterates through history_iterator, retrieving .
-
-        If it is a message by a webhook or a bot, it 
+        Iterates through history_iterator, retrieving messages until either
+        the context length is exhausted or we run out of messages.
 
         Returns:
             history (list of str): A list of messages to include in the context,
