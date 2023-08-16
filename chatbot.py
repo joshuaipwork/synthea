@@ -3,6 +3,7 @@ The discord client which contains the bulk of the logic for the chatbot.
 """
 import argparse
 import traceback
+from typing import Optional
 import discord
 import yaml
 
@@ -232,24 +233,23 @@ class LLMClient(discord.Client):
         response (str): The response to be 
         """
         with open(f'characters/{character}.yaml', "r", encoding='utf-8') as f:
-            loaded_config = yaml.safe_load(f)
+            char_config = yaml.safe_load(f)
 
-            # create a temporary webhook for the bot to speak as its character
-            if 'avatar' in loaded_config:
-                with open(f"avatars/{loaded_config['avatar']}", "rb") as avatar_file:
-                    avatar = avatar_file.read()
-            else:
-                avatar = None
-
-            webhook_target = message.channel
-            if isinstance(message.channel, discord.Thread):
-                webhook_target = message.channel.parent
-
-            webhook: discord.Webhook = await webhook_target.create_webhook(
-                name=loaded_config['name'],
-                avatar=avatar,
-                reason="Chatbot character"
+            # create an embed to represent the bot speaking as a character
+            embed: discord.Embed = discord.Embed(
+                title=char_config['name'],
+                description=response,
+                color=char_config['color'] if 'color' in char_config else None
             )
+
+            # add a picture via url
+
+            # TODO: Add local file upload options.
+            file: Optional[discord.File] = None
+            if 'avatar' in char_config:
+            #     file = discord.File(f"avatars/{char_config['avatar']}", filename="avatar.png")
+                # embed.set_thumbnail(url=f"attachment://avatar.png")
+                embed.set_thumbnail(url=char_config['avatar'])
 
             # if this message was in a thread, figure out which thread it was
             thread: discord.Thread | None = None
@@ -262,15 +262,21 @@ class LLMClient(discord.Client):
 
             # send the messages
             await self.send_response(
-                response,
-                webhook=webhook,
-                thread=thread
+                response_text=response,
+                embed=embed,
+                file=file,
+                thread=thread,
+                message_to_reply=message,
             )
 
-            # remove the webhook once done
-            await webhook.delete()
-
-    async def send_response(self, response_text, message_to_reply: discord.Message | None=None, webhook: discord.Webhook | None=None, thread: discord.Thread | None=None):
+    async def send_response(
+            self,
+            response_text,
+            message_to_reply: Optional[discord.Message]=None,
+            embed: Optional[discord.Embed]=None,
+            file: Optional[discord.Embed]=None,
+            thread: Optional[discord.Thread]=None
+        ):
         """
         Sends a response, splitting it up into multiple messages if required
 
@@ -287,20 +293,31 @@ class LLMClient(discord.Client):
         print(f'Response ({len(response_text)} chars):\n{response_text}')
 
         msg_index = 0
+        last_message = None
+        if embed:
+            await message_to_reply.reply(
+                        mention_author=True,
+                        embed=embed,
+                        file=file
+                    )
+            return
+
         while msg_index * CHAR_LIMIT < len(response_text):
             message_text = response_text[msg_index * CHAR_LIMIT:(msg_index + 1) * CHAR_LIMIT]
             if message_to_reply and isinstance(message_to_reply.channel, discord.DMChannel):
                 # TODO: remove duplicate code
                 if msg_index == 0:
-                    await message_to_reply.reply(message_text, mention_author=True)
+                    last_message = await message_to_reply.reply(
+                        message_text,
+                        mention_author=True,
+                        embed=embed
+                    )
                 else:
-                    await message_to_reply.channel.send(message_text, mention_author=True)
-            elif webhook:
-                # webhooks can't reply to anything, so message_to_reply is ignored
-                if thread:
-                    await webhook.send(message_text, thread=thread)
-                else:
-                    await webhook.send(message_text)
+                    last_message = await last_message.reply(
+                        message_text,
+                        mention_author=False,
+                        embed=embed
+                    )
             elif thread:
                 # It doesn't seem like you can send a message to a thread and reply at the same time
                 # TODO: Spend more time verifying that this is the case
@@ -309,9 +326,17 @@ class LLMClient(discord.Client):
                 # a message in a channel
                 # only reply to the first message to prevent spamming
                 if msg_index == 0:
-                    await message_to_reply.reply(message_text, mention_author=True)
+                    last_message = await message_to_reply.reply(
+                        message_text,
+                        mention_author=True,
+                        embed=embed,
+                    )
                 else:
-                    await message_to_reply.channel.send(message_text, mention_author=True)
+                    last_message = await last_message.reply(
+                        message_text,
+                        mention_author=False,
+                        embed=embed
+                    )
             else:
                 raise ValueError("No message found to reply to!")
             msg_index += 1
@@ -326,24 +351,30 @@ class LLMClient(discord.Client):
             filename of the file which stores the character's information, as well as the string
             used with the -c option to invoke the character through a command.
 
-            Otherwise, returns None
+            Otherwise, returns None if the bot was in its default 
         """
+        # if the bot was invoked 
         if not message.reference:
             return None
             
         try:
+            # bot uses embeds to speak as a character
             replied_message: discord.Message = await message.channel.fetch_message(message.reference.message_id)
-            if not replied_message.webhook_id:
-                return None
 
+            # if no embed, it wasn't speaking as a character
+            if not replied_message.embeds:
+                return None
+            embed = replied_message.embeds[0]
+
+            # cross reference the display name of the character against the name 
             with open('guilds/character_mapping.yaml', mode='r', encoding='utf-8') as file:
                 char_mapping = yaml.safe_load(file)
                 if replied_message.guild.id not in char_mapping:
-                    # the webhook isn't one from the bot
+                    # the character may have been removed from this guild
                     return None
-                if replied_message.author.name in char_mapping[replied_message.guild.id]:
-                    # the webhook is from the bot, return the character name
-                    return char_mapping[message.guild.id][replied_message.author.name]
+                if embed.title in char_mapping[replied_message.guild.id]:
+                    # the bot played a character, return the character name
+                    return char_mapping[message.guild.id][embed.title]
         except (discord.NotFound, discord.HTTPException, discord.Forbidden) as exc:
             print(exc)
         
