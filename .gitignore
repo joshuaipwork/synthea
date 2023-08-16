@@ -2,3 +2,5 @@ secrets.json
 avatars/*
 characters/*
 debug/*
+__pycache__/
+**/__pycache__/
