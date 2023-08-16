@@ -16,6 +16,10 @@ CHAR_LIMIT: int = 2000 # discord's character limit
 
 # This example requires the 'message_content' intent.
 class LLMClient(discord.Client):
+    """
+    A discord client which recieves messages from users. When users send
+    messages, the bot parses them and generates messages for them.
+    """
     model: ChattyModel = None
     parser: ChatbotParser = None
     async def setup_hook(self):
@@ -43,8 +47,7 @@ class LLMClient(discord.Client):
         # TODO: make the bot add reactions as buttons on its own post
         # TODO: Figure out how to distinguish webhooks made by me from webhooks made by someone else
         # TODO: Don't delete messages if the webhook was made by someone else.
-        if (reaction.message.webhook_id or reaction.message.author.id == self.user.id):
-            print(reaction)
+        if reaction.message.author.id == self.user.id:
             if (reaction.emoji == '🗑️'):
                 await reaction.message.delete()
 
@@ -216,12 +219,12 @@ class LLMClient(discord.Client):
             thread = await message.create_thread(name=thread_name)
 
             await self.send_response(
-                response,
+                response_text=response,
                 thread=thread
             )
         else:
             await self.send_response(
-                response,
+                response_text=response,
                 message_to_reply=message
             )
 
@@ -271,8 +274,8 @@ class LLMClient(discord.Client):
 
     async def send_response(
             self,
-            response_text,
-            message_to_reply: Optional[discord.Message]=None,
+            message_to_reply: discord.Message=None,
+            response_text: Optional[str]=None,
             embed: Optional[discord.Embed]=None,
             file: Optional[discord.Embed]=None,
             thread: Optional[discord.Thread]=None
@@ -281,22 +284,28 @@ class LLMClient(discord.Client):
         Sends a response, splitting it up into multiple messages if required
 
         Args:
-            response_text (str): The text of the message to be send in its responses
-            message_to_reply (discord.Message): If provided, the response will be sent in the same channel
-                as this message and the author of the message will be tagged in the response.
-            webhook (discord.Webhook): If provided, the bot will respond using this webhook instead of as itself.
-                Note that webhooks cannot reply to messages, so if passed message_to_reply is ignored.
-                Webhooks also cannot speak in DMs, so if it is a DM, the webhook will be ignored.
-            thread (discord.Thread): If provided, the response will be sent in this thread.
+            message_to_reply (discord.Message): The message that the user sent to invoke the bot.
+                the response will be sent in the same channel as this message
+                and the author of the message will be tagged in the response.
+            response_text (str): The text of the message to be send in its responses.
+                If embed is None, then response_text is required.
+            embed (discord.Embed or None): The embed to send in the response.
+                If response_text is None, then embed is required.
+            thread (discord.Thread or None): If provided, the response will be sent in this thread.
         """
         # split up the response into messages and send them individually
         print(f'Response ({len(response_text)} chars):\n{response_text}')
 
         msg_index = 0
         last_message = None
+        if not embed and not response_text:
+            raise ValueError("No embed or response text included in the response.")
+
+        # TODO: Respect character limits in embeds.
         if embed:
             await message_to_reply.reply(
                         mention_author=True,
+                        content=response_text,
                         embed=embed,
                         file=file
                     )
@@ -346,12 +355,13 @@ class LLMClient(discord.Client):
         Args:
             message (discord.Message)
         Returns:
-            If the message replied to a webhook representing a character adopted by the chatbot, 
-            returns the character's name. The name is the
-            filename of the file which stores the character's information, as well as the string
-            used with the -c option to invoke the character through a command.
+            If the message replied to a message representing a character adopted by the chatbot,
+            returns the character's name. 
+            
+            The name is the filename of the file which stores the character's information,
+            as well as the string used with the -c option to invoke the character through a command.
 
-            Otherwise, returns None if the bot was in its default 
+            Otherwise, returns None if the bot was speaking using its default persona. 
         """
         # if the bot was invoked 
         if not message.reference:
