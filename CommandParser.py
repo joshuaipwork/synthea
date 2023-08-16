@@ -44,28 +44,18 @@ class ChatbotParser:
             description="This bot is an interface for chatting with large language models."
         )
         self.parser.add_argument(
+            '-C', '-com', '--command',
+            action='store',
+            default=None,
+            help="Used to invoke utility functions. Note that commands will override the normal behavior \
+                of the bot where it generates a response to your message. Follow this argument with the name of \
+                the command to invoke. EG: --command list-characters"
+        )
+        self.parser.add_argument(
             '-c', '-char', '--character',
             action='store',
             default=None,
             help="The character for the bot to assume in its response."
-        )
-        self.parser.add_argument(
-            '-t', '--thread',
-            action='store_true',
-            help="If passed, the bot will create a new thread to contain its response. Further responses by the bot in that thread \
-                will read the history of the thread into the context."
-        )
-        self.parser.add_argument(
-            '-n', '--thread_name',
-            default="",
-            help="If the bot creates a new thread to contain its response, it will use this name. Otherwise, a generic name is used."
-        )
-        self.parser.add_argument(
-            '-max', '--max_new_tokens',
-            action="store",
-            type=int,
-            default=None,
-            help="The maximum number of tokens which the bot can generate."
         )
         self.parser.add_argument(
             'prompt',
@@ -79,7 +69,7 @@ class ChatbotParser:
 
     def parse(self, command: str) -> argparse.Namespace:
         """
-
+        Parses a command given by the user.
         """
         # remove the command start string if it was present.
         if command.startswith(self.config['command_start_str']):
