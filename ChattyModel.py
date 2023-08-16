@@ -42,7 +42,14 @@ class ChattyModel:
         return self.generate(prompt)
 
 
-    def generate(self, prompt: str, temperature: Optional[float]=None, top_p: Optional[float]=None, repetition_penalty: Optional[float]=None) -> str:
+    def generate(
+            self,
+            prompt: str,
+            temperature: Optional[float]=None,
+            top_p: Optional[float]=None,
+            repetition_penalty: Optional[float]=None,
+            max_new_tokens: Optional[int]=None
+        ) -> str:
         """
         Args:
             prompt (str): The prompt to feed to the AI.
@@ -53,13 +60,15 @@ class ChattyModel:
             top_p = self.config['default_top_p']
         if not repetition_penalty:
             repetition_penalty = self.config['default_repetition_penalty']
+        if not max_new_tokens:
+            max_new_tokens = self.config['max_new_tokens']
 
         pipe: TextGenerationPipeline = pipeline(
             "text-generation",
             model=self.model,
             tokenizer=self.tokenizer,
             min_new_tokens=2,
-            max_new_tokens=self.config['max_new_tokens'],
+            max_new_tokens=max_new_tokens,
             temperature=temperature,
             top_p=top_p,
             repetition_penalty=repetition_penalty,
