@@ -5,6 +5,5 @@ debug/*
 tests/
 __pycache__/
 **/__pycache__/
-config.yaml
 models/*
 !models/PLACE_MODELS_HERE.md
