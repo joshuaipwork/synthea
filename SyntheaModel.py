@@ -1,8 +1,7 @@
-from pathlib import Path
 import yaml
 from typing import Optional
 import yaml
-from transformers import AutoTokenizer, pipeline, logging, TextGenerationPipeline, TextStreamer
+from transformers import AutoTokenizer, logging
 from exllama.model import ExLlama, ExLlamaCache, ExLlamaConfig
 from exllama.tokenizer import ExLlamaTokenizer
 from exllama.generator import ExLlamaGenerator
@@ -185,8 +184,8 @@ class ChattyModel:
         """
         try:
             # Load character-specific configuration
-            with open(f'characters/{character}.yaml', "r", encoding='utf-8') as f:
-                loaded_config = yaml.safe_load(f)
+            with open(f'characters/{character}.yaml', "r", encoding='utf-8') as file:
+                loaded_config = yaml.safe_load(file)
                 temperature = loaded_config['temperature'] if 'temperature' in loaded_config else None
                 top_p = loaded_config['top_p'] if 'top_p' in loaded_config else None
                 repetition_penalty = loaded_config['repetition_penalty'] if 'repetition_penalty' in loaded_config else None
@@ -195,11 +194,12 @@ class ChattyModel:
             return self.generate(prompt, temperature, top_p, None, repetition_penalty, max_new_tokens)
 
         except FileNotFoundError:
-            raise FileNotFoundError(f"The character configuration file for {character} was not found.")
+            # pylint: disable-next=raise-missing-from
+            raise FileNotFoundError(f"No character named {character} was found.")
 
 if __name__ == "__main__":
-    chatbot = ChattyModel()
-    chatbot.load_model()
-    prompt = input("Enter a message: ")
-    response = chatbot.generate_from_defaults(prompt)
+    chat_model = ChattyModel()
+    chat_model.load_model()
+    user_prompt = input("Enter a message: ")
+    response = chat_model.generate_from_defaults(user_prompt)
     print(f"Response: {response}")
