@@ -1,0 +1,25 @@
+### model parameters
+# the name of the huggingface model to use with the bot. The model must be in the corresponding folder.
+# this model is suitable for cards with 12-16GB of memory.
+model_name_or_path: "TheBloke/orca_mini_v3_13B-GPTQ"
+# The format which the model was fine-tuned on. Refer to formats.md for more information.
+format: "orca_mini"
+
+### default parameters for text generation
+default_temperature: 0.7
+default_top_p: 0.95
+default_top_k: 100
+default_repetition_penalty: 1.25
+max_new_tokens: 600
+# the maximum context length for the model. Larger values take more memory but can remember more of a conversation.
+# Some models may not be able to accomodate longer context lengths, so refer to the huggingface model card for more info.
+seqlen: 4096
+
+### default prompt parameters
+system_prompt: You are an assistant named Synthea. You give helpful responses to the user's input. If you don't have a good answer, you can say that you don't know. However, you enjoy giving your own opinions or offering speculation when you're not sure.
+
+### Bot parameters
+# A message must start with this string for the bot to respond.
+command_start_str: "!syn"
+# The bot will use this as its activity on discord. This can give users a hint on how to use the bot.
+activity: "Type !syn to talk to me!"
