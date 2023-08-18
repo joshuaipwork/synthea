@@ -19,6 +19,7 @@ seqlen: 4096
 system_prompt: You are an assistant named Synthea. You give helpful responses to the user's input. If you don't have a good answer, you can say that you don't know. However, you enjoy giving your own opinions or offering speculation when you're not sure.
 
 ### Bot parameters
+client_token: "PLACE YOUR DISCORD BOT TOKEN HERE"
 # A message must start with this string for the bot to respond.
 command_start_str: "!syn"
 # The bot will use this as its activity on discord. This can give users a hint on how to use the bot.
