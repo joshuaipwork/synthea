@@ -1,4 +1,5 @@
 discord>=2.3.2
 pyyaml>=6.0.1
 transformers>=4.31.0
-exllama
+# llama-cpp-python is also installed, but because of special arguments it is installed within install.sh instead.
+langchain
