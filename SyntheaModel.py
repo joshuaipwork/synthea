@@ -2,15 +2,17 @@ import yaml
 from typing import Optional
 import yaml
 from transformers import AutoTokenizer, logging
-from exllama.model import ExLlama, ExLlamaCache, ExLlamaConfig
-from exllama.tokenizer import ExLlamaTokenizer
-from exllama.generator import ExLlamaGenerator
 import os, glob
 from transformers import StoppingCriteria
+from langchain.llms import LlamaCpp
+from langchain import PromptTemplate, LLMChain
+from langchain.callbacks.manager import CallbackManager
+from langchain.callbacks.streaming_stdout import StreamingStdOutCallbackHandler
+
 
 class StopAtReply(StoppingCriteria):
     """
-    Custom stopping criteria for text generation. 
+    Custom stopping criteria for text generation.
     Stops generation if the model predicts what the user might say next.
 
     Attributes:
@@ -18,8 +20,10 @@ class StopAtReply(StoppingCriteria):
         forbidden_strings (list): Strings that should not be present in the generated output.
         prompt (str): The user's input.
     """
-    
-    def __init__(self, tokenizer: AutoTokenizer, prompt_format: dict[str, str], prompt: str):
+
+    def __init__(
+        self, tokenizer: AutoTokenizer, prompt_format: dict[str, str], prompt: str
+    ):
         """
         Initializes the stopping criteria.
 
@@ -31,8 +35,8 @@ class StopAtReply(StoppingCriteria):
         super()
         self.tokenizer: AutoTokenizer = tokenizer
         self.forbidden_strings = [
-            prompt_format['user_message_tag'],
-            prompt_format['bot_message_tag'],
+            prompt_format["user_message_tag"],
+            prompt_format["bot_message_tag"],
         ]
         self.prompt = prompt
 
@@ -51,7 +55,7 @@ class StopAtReply(StoppingCriteria):
         # Get the generated text as a string
         generated_text = self.tokenizer.decode(input_ids[0])
         # Remove the prompt from the generated text
-        generated_text = generated_text.replace(self.prompt,'')
+        generated_text = generated_text.replace(self.prompt, "")
         # Check if any forbidden strings are present
         return any(string in generated_text for string in self.forbidden_strings)
 
@@ -60,6 +64,7 @@ class StopAtReply(StoppingCriteria):
 
     def __iter__(self):
         yield self
+
 
 class ChattyModel:
     """
@@ -72,49 +77,84 @@ class ChattyModel:
         model_config (ExLlamaConfig): Configuration for the ExLlama model.
         generator (ExLlamaGenerator): Generator for producing model responses.
     """
-    
+
     def __init__(self):
         """
         Initializes the chatbot model, loading configurations and settings from specified YAML files.
         """
-        with open('config.yaml', "r", encoding="utf-8") as file:
+        with open("config.yaml", "r", encoding="utf-8") as file:
             self.config = yaml.safe_load(file)
-        with open(f"formats/{self.config['format']}.yaml", "r", encoding="utf-8") as file:
+        with open(
+            f"formats/{self.config['format']}.yaml", "r", encoding="utf-8"
+        ) as file:
             self.format = yaml.safe_load(file)
         self.tokenizer = None
         self.model_config = None
         self.generator = None
 
-    def load_model(self, hf_model_dir: Optional[str]=None):
+    def load_model(
+        self,
+        hf_model_dir: Optional[str] = None,
+        temperature: Optional[float] = None,
+        top_p: Optional[float] = None,
+        top_k: Optional[float] = None,
+        repetition_penalty: Optional[float] = None,
+        max_new_tokens: Optional[int] = None,
+        context_length: Optional[int] = None,
+    ):
         """
-        Loads a model from a local directory. 
+        Loads a model from a local directory.
 
         Args:
-            hf_model_dir (str, optional): The Huggingface repository from which the model was downloaded. 
+            hf_model_dir (str, optional): The Huggingface repository from which the model was downloaded.
                 This is also the directory within the /models folder where the model was saved.
         """
         # If a model directory isn't specified, default to the config setting
         if not hf_model_dir:
-            hf_model_dir = self.config['model_name_or_path']
-
+            hf_model_dir = self.config["model_name_or_path"]
         local_model_dir = os.path.join("./models", hf_model_dir)
-        
+
         # Locate necessary files within the model directory
-        tokenizer_path = os.path.join(local_model_dir, "tokenizer.model")
-        model_config_path = os.path.join(local_model_dir, "config.json")
-        st_pattern = os.path.join(local_model_dir, "*.safetensors")
+        st_pattern = os.path.join(local_model_dir, "*.bin")
         model_path = glob.glob(st_pattern)[0]
 
-        # Initialize ExLlama components
-        self.model_config = ExLlamaConfig(model_config_path)
-        self.model_config.model_path = model_path
-        hf_model_dir = ExLlama(self.model_config)
-        self.tokenizer = ExLlamaTokenizer(tokenizer_path)
-        cache = ExLlamaCache(hf_model_dir)
-        self.generator = ExLlamaGenerator(hf_model_dir, self.tokenizer, cache)
+        # Callbacks support token-wise streaming
+        # Verbose is required to pass to the callback manager
+        # callback_manager = CallbackManager([StreamingStdOutCallbackHandler()])
 
-        # Mute unnecessary logging
-        logging.set_verbosity(logging.CRITICAL)
+        # TODO: Move this to config instead of hardcoded.
+        # Change this value based on your model and your GPU VRAM pool.
+        n_gpu_layers = 200
+        # Should be between 1 and n_ctx, consider the amount of VRAM in your GPU.
+        n_batch = 4096
+
+        # If parameters aren't specified, default to the model's configuration
+        if not temperature:
+            temperature = self.config["default_temperature"]
+        if not top_p:
+            top_p = self.config["default_top_p"]
+        if not top_k:
+            top_k = self.config["default_top_k"]
+        if not repetition_penalty:
+            repetition_penalty = self.config["default_repetition_penalty"]
+        if not max_new_tokens:
+            max_new_tokens = self.config["max_new_tokens"]
+        if not context_length:
+            context_length = self.config["context_length"]
+
+        # Make sure the model path is correct for your system!
+        self.llm = LlamaCpp(
+            model_path=model_path,
+            temperature=temperature,
+            max_tokens=max_new_tokens,
+            n_ctx=context_length,
+            top_p=top_p,
+            top_k=top_k,
+            n_gpu_layers=n_gpu_layers,
+            n_batch=n_batch,
+            callback_manager=callback_manager,
+            verbose=True,
+        )
 
     def generate_from_defaults(self, prompt: str) -> str:
         """
@@ -128,7 +168,10 @@ class ChattyModel:
         """
         return self.generate(prompt)
 
-    def generate(self, prompt: str, temperature: Optional[float]=None, top_p: Optional[float]=None, top_k: Optional[float]=None, repetition_penalty: Optional[float]=None, max_new_tokens: Optional[int]=None) -> str:
+    def generate(
+        self,
+        prompt: str,
+    ) -> str:
         """
         Generates a response from the model using specified settings or defaults.
 
@@ -143,28 +186,15 @@ class ChattyModel:
         Returns:
             str: Model's response.
         """
-        # If parameters aren't specified, default to the model's configuration
-        if not temperature:
-            temperature = self.config['default_temperature']
-        if not top_p:
-            top_p = self.config['default_top_p']
-        if not top_k:
-            top_k = self.config['default_top_k']
-        if not repetition_penalty:
-            repetition_penalty = self.config['default_repetition_penalty']
-        if not max_new_tokens:
-            max_new_tokens = self.config['max_new_tokens']
 
         # Update generator settings
-        self.generator.settings.token_repetition_penalty_max = repetition_penalty
-        self.generator.settings.temperature = temperature
-        self.generator.settings.top_p = top_p
-        self.generator.settings.top_k = top_k
+        prompt_template = PromptTemplate(
+            template="""{prompt}""", input_variables=["prompt"]
+        )
 
-        output = self.generator.generate_simple(prompt, max_new_tokens=max_new_tokens)
+        llm_chain = LLMChain(prompt=prompt_template, llm=self.llm)
 
-        # Remove the initial prompt from the generated output
-        str_output = output[len(prompt):]
+        str_output = llm_chain.run(prompt)
 
         return str_output
 
@@ -184,18 +214,31 @@ class ChattyModel:
         """
         try:
             # Load character-specific configuration
-            with open(f'characters/{character}.yaml', "r", encoding='utf-8') as file:
+            with open(f"characters/{character}.yaml", "r", encoding="utf-8") as file:
                 loaded_config = yaml.safe_load(file)
-                temperature = loaded_config['temperature'] if 'temperature' in loaded_config else None
-                top_p = loaded_config['top_p'] if 'top_p' in loaded_config else None
-                repetition_penalty = loaded_config['repetition_penalty'] if 'repetition_penalty' in loaded_config else None
-                max_new_tokens = loaded_config['max_new_tokens'] if 'max_new_tokens' in loaded_config else None
+                temperature = (
+                    loaded_config["temperature"]
+                    if "temperature" in loaded_config
+                    else None
+                )
+                top_p = loaded_config["top_p"] if "top_p" in loaded_config else None
+                repetition_penalty = (
+                    loaded_config["repetition_penalty"]
+                    if "repetition_penalty" in loaded_config
+                    else None
+                )
+                max_new_tokens = (
+                    loaded_config["max_new_tokens"]
+                    if "max_new_tokens" in loaded_config
+                    else None
+                )
 
-            return self.generate(prompt, temperature, top_p, None, repetition_penalty, max_new_tokens)
+            return self.generate(prompt)
 
         except FileNotFoundError:
             # pylint: disable-next=raise-missing-from
             raise FileNotFoundError(f"No character named {character} was found.")
+
 
 if __name__ == "__main__":
     chat_model = ChattyModel()
