@@ -124,7 +124,7 @@ This bot uses a large language model to generate responses to user questions. Hu
 2. **Creating the Folder:**
    At the top of the huggingface repo page is the name of the model. Navigate to the root of the repo, then click the icon to the right of the
    name of the repo to copy it to your clipboard.
-   ![Alt text](image.png)
+   ![Alt text](images/copy_repo_name.png)
 
    Then, type the following command and paste
    ```bash
