@@ -13,7 +13,7 @@ default_repetition_penalty: 1.25
 max_new_tokens: 600
 # the maximum context length for the model. Larger values take more memory but can remember more of a conversation.
 # Some models may not be able to accomodate longer context lengths, so refer to the huggingface model card for more info.
-seqlen: 4096
+context_length: 4096
 
 ### default prompt parameters
 system_prompt: You are an assistant named Synthea. You give helpful responses to the user's input. If you don't have a good answer, you can say that you don't know. However, you enjoy giving your own opinions or offering speculation when you're not sure.
