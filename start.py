@@ -1,6 +1,6 @@
 import discord
 import yaml
-from SyntheaClient import SyntheaClient
+from synthea.SyntheaClient import SyntheaClient
 
 with open("config.yaml", "r", encoding="utf-8") as file:
     config = yaml.safe_load(file)

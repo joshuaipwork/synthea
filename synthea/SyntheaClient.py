@@ -7,9 +7,9 @@ from typing import Optional
 import discord
 import yaml
 
-from SyntheaModel import ChattyModel
-from CommandParser import ChatbotParser, CommandError, ParserExitedException
-from ContextManager import ContextManager
+from synthea.SyntheaModel import ChattyModel
+from synthea.CommandParser import ChatbotParser, CommandError, ParserExitedException
+from synthea.ContextManager import ContextManager
 
 COMMAND_START_STR: str = "!syn "
 CHAR_LIMIT: int = 2000  # discord's character limit

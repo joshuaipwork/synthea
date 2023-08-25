@@ -2,8 +2,10 @@ secrets.json
 avatars/*
 characters/*
 debug/*
-tests/
+build/**
 __pycache__/
 **/__pycache__/
 models/*
 !models/PLACE_MODELS_HERE.md
+Synthea.egg-info/
+**.db

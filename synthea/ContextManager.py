@@ -6,9 +6,9 @@ message history and persona.
 from typing import AsyncIterator, Optional
 import discord
 import yaml
-from SyntheaModel import ChattyModel
+from synthea.SyntheaModel import ChattyModel
 
-from CommandParser import ChatbotParser, CommandError, ParserExitedException
+from CommandParser import CommandParser, CommandError, ParserExitedException
 
 
 class ThreadHistoryIterator:
@@ -293,7 +293,7 @@ class ContextManager:
             text = message.embeds[0].description
         elif message.clean_content.startswith(self.config["command_start_str"]):
             try:
-                args = ChatbotParser().parse(message.clean_content)
+                args = CommandParser().parse(message.clean_content)
                 text = args.prompt
             except (CommandError, ParserExitedException):
                 # if the command is invalid, just append the whole thing
