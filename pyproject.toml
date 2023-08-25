@@ -1,0 +1,11 @@
+[build-system]
+requires = ["setuptools", "wheel"]
+
+[project]
+name = "Synthea"
+version = "0.2.2"
+description = "My amazing project"
+
+[tool.setuptools]
+packages = ["synthea"]
+# install_requires = ["some_dependency >= 1.0"]
