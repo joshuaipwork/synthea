@@ -1,6 +1,11 @@
 import argparse
-import discord
+from collections import namedtuple
 import yaml
+
+HelpModeData = namedtuple("HelpModeData", ["help_topic"])
+UtilityModeData = namedtuple("UtilityModeData", ["utility_name", "arguments"])
+SimpleGenerationModeData = namedtuple("SimpleGenerationModeData", ["prompt"])
+GenerationModeData = namedtuple("GenerationModeData", ["char_name", "prompt"])
 
 
 class CommandError(ValueError):
@@ -48,11 +53,12 @@ class ChatbotParser:
             exit_on_error=False,
             prog="!syn",
             description="This bot is an interface for chatting with large language models.",
+            add_help=False,
         )
         self.parser.add_argument(
-            "-C",
-            "-com",
-            "--command",
+            "-u",
+            "-util",
+            "--utility",
             action="store",
             default=None,
             help="Used to invoke utility functions. Note that commands will override the normal behavior \
@@ -68,7 +74,17 @@ class ChatbotParser:
             help="The character for the bot to assume in its response.",
         )
         self.parser.add_argument(
-            "prompt", nargs="+", help="The prompt to give the bot."
+            "-h",
+            "-help",
+            "--help",
+            action="store",
+            nargs="?",
+            const="intro",
+            default=None,
+            help="The character for the bot to assume in its response.",
+        )
+        self.parser.add_argument(
+            "prompt", nargs=argparse.REMAINDER, help="The prompt to give the bot."
         )
 
         # load config
