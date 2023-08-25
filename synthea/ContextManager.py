@@ -8,7 +8,7 @@ import discord
 import yaml
 from synthea.SyntheaModel import ChattyModel
 
-from synthea.CommandParser import CommandParser, CommandError, ParserExitedException
+from synthea.CommandParser import ChatbotParser, CommandError, ParserExitedException
 
 
 class ThreadHistoryIterator:
@@ -293,7 +293,7 @@ class ContextManager:
             text = message.embeds[0].description
         elif message.clean_content.startswith(self.config["command_start_str"]):
             try:
-                args = CommandParser().parse(message.clean_content)
+                args = ChatbotParser().parse(message.clean_content)
                 text = args.prompt
             except (CommandError, ParserExitedException):
                 # if the command is invalid, just append the whole thing

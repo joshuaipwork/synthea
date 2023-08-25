@@ -290,7 +290,7 @@ class SyntheaClient(discord.Client):
                 char_mapping = yaml.safe_load(file)
 
                 # If this is a guild, only reply as the character if the character is still added to the guild
-                if replied_message.guild.id:
+                if replied_message.guild:
                     if replied_message.guild.id not in char_mapping:
                         # the character may have been removed from this guild
                         return None
