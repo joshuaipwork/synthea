@@ -8,7 +8,7 @@ import discord
 import yaml
 from synthea.SyntheaModel import ChattyModel
 
-from CommandParser import CommandParser, CommandError, ParserExitedException
+from synthea.CommandParser import CommandParser, CommandError, ParserExitedException
 
 
 class ThreadHistoryIterator:
