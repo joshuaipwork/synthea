@@ -2,6 +2,8 @@ import argparse
 from collections import namedtuple
 import yaml
 
+from synthea.utilties import NO_UTILITY_SPECIFIED
+
 HelpModeData = namedtuple("HelpModeData", ["help_topic"])
 UtilityModeData = namedtuple("UtilityModeData", ["utility_name", "arguments"])
 SimpleGenerationModeData = namedtuple("SimpleGenerationModeData", ["prompt"])
@@ -60,6 +62,8 @@ class ChatbotParser:
             "-util",
             "--utility",
             action="store",
+            nargs="?",
+            const=NO_UTILITY_SPECIFIED,
             default=None,
             help="Used to invoke utility functions. Note that commands will override the normal behavior \
                 of the bot where it generates a response to your message. Follow this argument with the name of \
