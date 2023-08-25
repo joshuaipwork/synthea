@@ -126,7 +126,7 @@ class ChattyModel:
         # Change this value based on your model and your GPU VRAM pool.
         n_gpu_layers = 200
         # Should be between 1 and n_ctx, consider the amount of VRAM in your GPU.
-        n_batch = 4096
+        n_batch = 512
 
         # If parameters aren't specified, default to the model's configuration
         if not temperature:
@@ -152,7 +152,6 @@ class ChattyModel:
             top_k=top_k,
             n_gpu_layers=n_gpu_layers,
             n_batch=n_batch,
-            callback_manager=callback_manager,
             verbose=True,
         )
 
@@ -214,25 +213,6 @@ class ChattyModel:
         """
         try:
             # Load character-specific configuration
-            with open(f"characters/{character}.yaml", "r", encoding="utf-8") as file:
-                loaded_config = yaml.safe_load(file)
-                temperature = (
-                    loaded_config["temperature"]
-                    if "temperature" in loaded_config
-                    else None
-                )
-                top_p = loaded_config["top_p"] if "top_p" in loaded_config else None
-                repetition_penalty = (
-                    loaded_config["repetition_penalty"]
-                    if "repetition_penalty" in loaded_config
-                    else None
-                )
-                max_new_tokens = (
-                    loaded_config["max_new_tokens"]
-                    if "max_new_tokens" in loaded_config
-                    else None
-                )
-
             return self.generate(prompt)
 
         except FileNotFoundError:
