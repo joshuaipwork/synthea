@@ -1,15 +1,22 @@
 """
 The discord client which contains the bulk of the logic for the chatbot.
 """
-import argparse
 import traceback
 from typing import Optional
 import discord
+from discord import app_commands
 import yaml
+from synthea.CharactersDatabase import CharactersDatabase
 
-from synthea.SyntheaModel import ChattyModel
-from synthea.CommandParser import ChatbotParser, CommandError, ParserExitedException
+from synthea.SyntheaModel import SyntheaModel
+from synthea.CommandParser import ChatbotParser
 from synthea.ContextManager import ContextManager
+from synthea.modals import CharCreationView, UpdateCharModal, CharCreationStep
+from synthea.character_errors import (
+    CharacterNotFoundError,
+    CharacterNotOnServerError,
+    ForbiddenCharacterError,
+)
 
 COMMAND_START_STR: str = "!syn "
 CHAR_LIMIT: int = 2000  # discord's character limit
@@ -24,27 +31,37 @@ class SyntheaClient(discord.Client):
 
     model: SyntheaModel = None
     parser: ChatbotParser = None
+    char_db: CharactersDatabase = None
+    context_manager: ContextManager = None
+    synced = False
 
     async def setup_hook(self):
         """
         When the bot is started and logs in, load the model.
         """
-        self.model = ChattyModel()
+        self.model = SyntheaModel()
         self.model.load_model()
-
+        self.char_db = CharactersDatabase()
         self.parser = ChatbotParser()
+        self.context_manager = ContextManager(self.model, self.user.id)
 
     async def on_ready(self):
         """
         Reports to the console that we logged in.
         """
-        print(f"Logged on as {self.user}!")
-        # TODO: There seems to be some issues
-        with open("config.yaml", encoding="utf-8") as file:
-            config = yaml.safe_load(file)
+        with open("config.yaml", encoding="utf-8") as config_file:
+            config = yaml.safe_load(config_file)
             await self.change_presence(activity=discord.Game(name=config["activity"]))
 
-    async def on_reaction_add(self, reaction: discord.Reaction, user):
+        # sync slash commands only the first time that we are ready
+        if not self.synced:
+            await tree.sync()
+            self.synced = True
+            print("Synced command tree")
+
+        print(f"Logged on as {self.user}!")
+
+    async def on_reaction_add(self, reaction: discord.Reaction, _user):
         """
         Enables the bot to take a variety of actions when its posts are reacted to
 
@@ -101,62 +118,63 @@ class SyntheaClient(discord.Client):
 
         # the message was meant for the bot and we must respond
         try:
-            # let the user know that we are working on their command
             await message.add_reaction("⏳")
-
-            # figure out where the parameters are so the bot can respond with the correct character or model
-            command: str = message.clean_content
-
-            try:
-                args = self.parser.parse(command)
-            except CommandError as err:
-                # for other types of error, show them the error and mark the command as failed.
-                raise err
-
-            # now, respond to the command appropriately.
-            await self.respond(args, message)
-
-            # let the user know that we successfully completed their task.
+            await self.respond_to_user(message)
             await message.add_reaction("✅")
+
+        # if error, let the user know what went wrong
+        # pylint: disable-next=broad-exception-caught
         except Exception as err:
-            # let the user know that something went wrong
             await message.add_reaction("❌")
             traceback.print_exc(limit=4)
-            await message.reply(str(err), mention_author=True)
+            await message.reply(f"❌ {err}", mention_author=True)
+        # after running, indicate the bot is done with their command.
         finally:
-            # let the user know that the bot is done with their command.
             await message.remove_reaction("⏳", self.user)
 
-    async def respond(self, args, message: discord.Message):
-        """ """
-        character: str = args.character
+    async def respond_to_user(self, message: discord.Message):
+        """
+        Generates and send a response to a user message from the chatbot
+
+        Args:
+            message (str): The message to respond to
+        """
+
+        # parse the command the user sent
+        command: str = message.clean_content
+        args = self.parser.parse(command)
+        char_id: str = args.character
         prompt: str = args.prompt
 
         # if the user responded to the bot playing a character, respond as that character
-        replied_character = await self._get_character_replied_to(message)
-        if replied_character:
-            character = replied_character
+        replied_char_id = await self._get_character_replied_to(message)
+        if replied_char_id:
+            char_id = replied_char_id
 
-        # insert the user's prompt into the prompt template specified by the model
-        context_manager: ContextManager = ContextManager(self.model, self.user.id)
-
-        # generate a response and send it to the user.
-        prompt = await context_manager.compile_prompt_from_chat(
-            message=message,
-            character=character,
-        )
-
-        if character:
-            print(
-                f"Generating for {message.author} with char {character} and prompt: \n{prompt}"
+        # send a response as a character
+        if char_id:
+            can_access = self.char_db.can_access_character(
+                char_id=char_id,
+                user_id=message.author.id,
+                server_id=message.guild.id if message.guild else None,
             )
-            response = self.model.generate_from_character(
-                prompt=prompt, character=character
+            if not can_access:
+                raise CharacterNotOnServerError()
+
+            char_data = self.char_db.load_character(char_id)
+            prompt = await self.context_manager.compile_prompt_from_chat(
+                message, system_prompt=char_data["system_prompt"]
             )
-            await self.send_response_as_character(response, character, message)
+
+            print(f"Resp for {message.author} with char {char_id} prompt: \n{prompt}")
+            response = self.model.generate(prompt=prompt)
+            await self.send_response_as_character(response, char_data, message)
+        # send a simple plaintext response without adopting a character
         else:
+            # generate a response and send it to the user.
+            prompt = await self.context_manager.compile_prompt_from_chat(message)
             print(f"Generating for {message.author} with prompt: \n{prompt}")
-            response = self.model.generate_from_defaults(prompt=prompt)
+            response = self.model.generate(prompt=prompt)
             await self.send_response_as_base(response, message)
 
     async def send_response_as_base(self, response: str, message: discord.Message):
@@ -166,7 +184,7 @@ class SyntheaClient(discord.Client):
         await self.send_response(response_text=response, message_to_reply=message)
 
     async def send_response_as_character(
-        self, response: str, character: str, message: discord.Message
+        self, response: str, char_data: dict[str, str], message: discord.Message
     ):
         """
         Sends the given response in the same channel as the given message while
@@ -174,34 +192,40 @@ class SyntheaClient(discord.Client):
 
         response (str): The response to be sent
         """
-        with open(f"characters/{character}.yaml", "r", encoding="utf-8") as f:
-            char_config = yaml.safe_load(f)
+        if not char_data:
+            raise CharacterNotFoundError()
 
-            # create an embed to represent the bot speaking as a character
-            embed: discord.Embed = discord.Embed(
-                title=char_config["name"],
-                description=response,
-                color=char_config["color"] if "color" in char_config else None,
-            )
+        # create an embed to represent the bot speaking as a character
+        char_name = (
+            char_data["display_name"]
+            if "display_name" in char_data
+            else char_data["id"]
+        )
+        embed: discord.Embed = discord.Embed(
+            title=char_name,
+            description=response,
+        )
 
-            # add a picture via url
-            # TODO: Add local file upload options.
-            if "avatar" in char_config:
-                embed.set_thumbnail(url=char_config["avatar"])
+        # add a picture via url
+        if "avatar_link" in char_data:
+            embed.set_thumbnail(url=char_data["avatar_link"])
 
-            # send the messages
-            await self.send_response(
-                response_text=response,
-                embed=embed,
-                message_to_reply=message,
-            )
+        # add the id to the footer so the bot knows what char sent this
+        embed.set_footer(text=char_data["id"])
+
+        # send the message with embed
+        await self.send_response(
+            response_text=response,
+            embed=embed,
+            message_to_reply=message,
+        )
 
     async def send_response(
         self,
         message_to_reply: discord.Message = None,
         response_text: Optional[str] = None,
         embed: Optional[discord.Embed] = None,
-        file: Optional[discord.Embed] = None,
+        _file: Optional[discord.Embed] = None,
     ):
         """
         Sends a response, splitting it up into multiple messages if required
@@ -229,7 +253,7 @@ class SyntheaClient(discord.Client):
 
         # TODO: Respect character limits in embeds.
         if embed:
-            await message_to_reply.reply(mention_author=True, embed=embed, file=file)
+            await message_to_reply.reply(mention_author=True, embed=embed)
             return
 
         while msg_index * CHAR_LIMIT < len(response_text):
@@ -255,16 +279,13 @@ class SyntheaClient(discord.Client):
 
     async def _get_character_replied_to(self, message: discord.Message) -> str | None:
         """
+        Determines if a user replied to a character.
+
         Args:
-            message (discord.Message)
+            message (discord.Message): The message the user sent.
         Returns:
-            If the message replied to a message representing a character adopted by the chatbot,
-            returns the character's name.
-
-            The name is the filename of the file which stores the character's information,
-            as well as the string used with the -c option to invoke the character through a command.
-
-            Otherwise, returns None if the bot was speaking using its default persona.
+            (str, optional): The id of the character who sent the message the user replied to.
+                If there is no character or this message is not a reply, returns None instead
         """
         # if the bot was invoked without replying to a message, no character was replied to.
         if not message.reference:
@@ -281,26 +302,179 @@ class SyntheaClient(discord.Client):
                 return None
             embed = replied_message.embeds[0]
 
-            # cross reference the display name of the character against the name in the file.
-            with open(
-                "guilds/character_mapping.yaml", mode="r", encoding="utf-8"
-            ) as file:
-                char_mapping = yaml.safe_load(file)
+            # ids are embedded in the footer, so retrieve that
+            return embed.footer.text
 
-                # If this is a guild, only reply as the character if the character is still added to the guild
-                if replied_message.guild:
-                    if replied_message.guild.id not in char_mapping:
-                        # the character may have been removed from this guild
-                        return None
-                    if embed.title in char_mapping[replied_message.guild.id]:
-                        # the bot played a character, return the character name
-                        return char_mapping[message.guild.id][embed.title]
-                else:
-                    # this is probably DMs.
-                    return None
+        # if we can't retrieve the replied message (maybe deleted), just say no char
         except (discord.NotFound, discord.HTTPException, discord.Forbidden) as exc:
             print(exc)
 
         return None
 
-    # async def ()
+
+with open("config.yaml", "r", encoding="utf-8") as file:
+    token = yaml.safe_load(file)["client_token"]
+
+# set up the discord client. The client and takes actions on our behalf
+intents = discord.Intents.all()
+intents.message_content = True
+intents.presences = True
+intents.members = True
+client = SyntheaClient(intents=intents)
+
+# set up slash commands. It's pretty gross having this here along with the client,
+# but it doesn't seem like there's a better way to do it
+tree = app_commands.CommandTree(client)
+
+
+@tree.command(
+    name="create_character",
+    description="Create a character from scratch.",
+)
+async def create_character_ui(interaction: discord.Interaction):
+    """Opens the create_character UI for the user."""
+    with open(
+        "synthea/menu_dialogs/create_character.yaml", "r", encoding="utf-8"
+    ) as dialog_file:
+        dialogs = yaml.safe_load(dialog_file)
+    await interaction.response.send_message(
+        dialogs[CharCreationStep.ID.value]["text"],
+        view=CharCreationView(),
+        ephemeral=True,
+    )
+
+
+@tree.command(
+    name="update_character",
+    description="Update a character",
+)
+async def update_character_ui(interaction: discord.Interaction, char_id: str):
+    """Opens the update_character UI for the user."""
+    try:
+        # will raise errors if the character can't be updated
+        modal = UpdateCharModal(char_id, interaction)
+        await interaction.response.send_modal(modal)
+    except CharacterNotFoundError as err:
+        await interaction.response.send_message(f"❌ {err}", ephemeral=True)
+    except ForbiddenCharacterError as err:
+        await interaction.response.send_message(f"❌ {err}", ephemeral=True)
+
+
+@tree.command(
+    name="delete_character",
+    description="Delete an character you own",
+    guild=discord.Object(id=1085939230284460102),
+)
+async def delete_character(interaction: discord.Interaction, char_id: str):
+    """Deletes a character, throwing an error if not owned"""
+    try:
+        client.char_db.delete_character(char_id, interaction.user.id)
+        await interaction.response.send_message(
+            f"{char_id} was deleted.", ephemeral=True
+        )
+    except CharacterNotFoundError as err:
+        await interaction.response.send_message(f"❌ {err}", ephemeral=True)
+    except ForbiddenCharacterError as err:
+        await interaction.response.send_message(f"❌ {err}", ephemeral=True)
+
+
+@tree.command(
+    name="add_character",
+    description="Let anyone on this server use your character",
+)
+async def add_character(interaction: discord.Interaction, char_id: str):
+    try:
+        if not interaction.guild:
+            await interaction.response.send_message(
+                "❌ You are not speaking from a server!", ephemeral=True
+            )
+        # will raise errors if the character can't be updated
+        client.char_db.add_character_to_server(
+            char_id=char_id, user_id=interaction.user.id, server_id=interaction.guild.id
+        )
+        await interaction.response.send_message(
+            f"{char_id} has been added to the server!"
+        )
+    except CharacterNotFoundError as err:
+        await interaction.response.send_message(f"❌ {err}", ephemeral=True)
+    except ForbiddenCharacterError as err:
+        await interaction.response.send_message(f"❌ {err}", ephemeral=True)
+
+
+@tree.command(
+    name="remove_character",
+    description="Stop allowing anyone from this server to use your character",
+)
+async def remove_character(interaction: discord.Interaction, char_id: str):
+    try:
+        if not interaction.guild:
+            await interaction.response.send_message(
+                "❌ You are not speaking from a server!", ephemeral=True
+            )
+        # will raise errors if the character can't be updated
+        client.char_db.remove_character_from_server(
+            char_id=char_id, user_id=interaction.user.id, server_id=interaction.guild.id
+        )
+        await interaction.response.send_message(
+            f"{char_id} has been removed from the server!"
+        )
+    except CharacterNotFoundError as err:
+        await interaction.response.send_message(f"❌ {err}", ephemeral=True)
+    except ForbiddenCharacterError as err:
+        await interaction.response.send_message(f"❌ {err}", ephemeral=True)
+
+
+@tree.command(
+    name="list_characters",
+    description="Show a list of public characters on this server",
+)
+async def send_server_char_list(interaction: discord.Interaction):
+    """Sends a list of public characters on the server to the interacter"""
+    # public so others can see it
+    # TODO: Paginate
+    if not interaction.guild:
+        await interaction.response.send_message(
+            """❌ You are not on a server.
+            Did you want to get a list of your owned characters?
+            Use /list_owned_characters instead.""",
+            ephemeral=True,
+        )
+
+    char_list = client.char_db.list_server_characters(interaction.guild.id)
+    if not char_list:
+        await interaction.response.send_message(
+            "There are no public characters on this server.", ephemeral=True
+        )
+
+    await interaction.response.send_message(format_list(char_list), ephemeral=True)
+
+
+@tree.command(
+    name="list_owned_characters",
+    description="Show a list of characters you own",
+)
+async def send_owned_char_list(interaction: discord.Interaction):
+    """Sends a list of characters the user owns to the interacter"""
+    char_list = client.char_db.list_user_characters(interaction.user.id)
+    if not char_list:
+        await interaction.response.send_message(
+            "You don't own any characters.", ephemeral=True
+        )
+
+    await interaction.response.send_message(format_list(char_list), ephemeral=True)
+
+
+def format_list(char_list: list[dict[str, str]]) -> str:
+    """Generates a formatted text version of a list of characters and descriptions"""
+    output = ""
+    # I'd love to make a table, but discord doesn't support it. Markdown lists are the best I have
+    for char in char_list:
+        output += f'\n{char["id"]}'
+        if "display_name" in char and char["display_name"]:
+            output += f" ({char['display_name']})"
+        if "description" in char and char["description"]:
+            output += f'\n> {char["description"]}'
+    return output
+
+
+client.run(token)

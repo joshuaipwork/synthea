@@ -6,7 +6,7 @@ message history and persona.
 from typing import AsyncIterator, Optional
 import discord
 import yaml
-from synthea.SyntheaModel import ChattyModel
+from synthea.SyntheaModel import SyntheaModel
 
 from synthea.CommandParser import ChatbotParser, CommandError, ParserExitedException
 
@@ -80,14 +80,14 @@ class ContextManager:
     # A rough measure of how many character are in each token.
     EST_CHARS_PER_TOKEN = 3
 
-    def __init__(self, model: ChattyModel, bot_user_id: int):
+    def __init__(self, model: SyntheaModel, bot_user_id: int):
         """
         model (str): The model that is generating the text. Used to determine the prompt format
             and other configuration options.
         bot_user_id (str): The discord user id of the bot. Used to determine if a message came from
             the bot or from a user.
         """
-        self.model: ChattyModel = model
+        self.model: SyntheaModel = model
         self.context_length: int = self.model.config["context_length"]
         self.bot_user_id: int = bot_user_id
 
@@ -96,7 +96,7 @@ class ContextManager:
             self.config = yaml.safe_load(file)
 
     async def compile_prompt_from_chat(
-        self, message: discord.Message, character: Optional[str] = None
+        self, message: discord.Message, system_prompt: Optional[str] = None
     ):
         """
         Generates a prompt which includes the context from previous messages in a reply chain.
@@ -104,14 +104,13 @@ class ContextManager:
 
         Args:
             message (discord.Message): The last message from the user.
-            character (str): The name of a character to use. If the character is specified, the character file will populate
-                the system prompt before user prompts are created.
+            system_prompt (str): The system prompt to use when generating the prompt
         """
         history_iterator: ReplyChainIterator = ReplyChainIterator(message)
         final_prompt = await self.compile_prompt(
             message=message,
             history_iterator=history_iterator,
-            character=character,
+            system_prompt=system_prompt,
         )
         return final_prompt
 
@@ -119,7 +118,7 @@ class ContextManager:
         self,
         message: discord.Message,
         history_iterator: AsyncIterator[discord.Message],
-        character: Optional[str] = None,
+        system_prompt: Optional[str] = None,
     ):
         """
         Generates a prompt which includes the context from previous messages from the history.
@@ -128,22 +127,17 @@ class ContextManager:
             message (discord.Message): The last message to add to the prompt.
             history_iterator (ReplyChainIterator): An iterator that contains the chat history
                 to be included in the prompt.
-            character (str): The name of a character to use. If the character is specified, the character file will populate
-                the system prompt before user prompts are created.
+            system_prompt (str): The system prompt to use when generating the prompt
         """
         # pieces of the prompts are appended to the list then assembled in reverse order into the final prompt
         history: list[str] = []
         token_count: int = 0
 
-        system_prompt: str = ""
         bot_message_tag = self.model.format["bot_message_tag"]
-        system_prompt = self.config["system_prompt"]
 
-        # if the character has a special system prompt, override the default model system prompt
-        if character:
-            with open(f"characters/{character}.yaml", "r", encoding="utf-8") as f:
-                char_chat_config = yaml.safe_load(f)
-                system_prompt = char_chat_config["system_prompt"]
+        # use provided system prompt
+        if not system_prompt:
+            system_prompt = self.config["system_prompt"]
 
         # add the bot role tag so the AI knows to continue from this point.
         history.append(f"{bot_message_tag} ")
