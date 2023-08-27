@@ -67,9 +67,6 @@ class SyntheaClient(discord.Client):
 
         If a message is not by a user or fails to start with the COMMAND_START_STR, then
         the message is ignored.
-
-        Args:
-
         """
         # prevent bot from responding to itself
         if message.author == self.user:
@@ -189,7 +186,6 @@ class SyntheaClient(discord.Client):
 
             # add a picture via url
             # TODO: Add local file upload options.
-            file: Optional[discord.File] = None
             if "avatar" in char_config:
                 embed.set_thumbnail(url=char_config["avatar"])
 
@@ -197,7 +193,6 @@ class SyntheaClient(discord.Client):
             await self.send_response(
                 response_text=response,
                 embed=embed,
-                file=file,
                 message_to_reply=message,
             )
 
@@ -227,7 +222,10 @@ class SyntheaClient(discord.Client):
         msg_index = 0
         last_message = None
         if not embed and not response_text:
-            raise ValueError("No embed or response text included in the response.")
+            # TODO: Decide if sending a default response or raising an error is better.
+            # For now, ominous default response because it's funny
+            response_text = "..."
+            # raise ValueError("No embed or response text included in the response.")
 
         # TODO: Respect character limits in embeds.
         if embed:
