@@ -155,35 +155,15 @@ class SyntheaModel:
             verbose=True,
         )
 
-    def generate_from_defaults(self, prompt: str) -> str:
-        """
-        Generates a response using default settings.
-
-        Args:
-            prompt (str): User's input.
-
-        Returns:
-            str: Model's response.
-        """
-        return self.generate(prompt)
-
-    def generate(
-        self,
-        prompt: str,
-    ) -> str:
+    def generate(self, prompt: str) -> str:
         """
         Generates a response from the model using specified settings or defaults.
 
         Args:
-            prompt (str): User's input.
-            temperature (float, optional): Temperature setting for randomness of response.
-            top_p (float, optional): Nucleus sampling parameter.
-            top_k (float, optional): Top-K sampling parameter.
-            repetition_penalty (float, optional): Penalty for repeated tokens.
-            max_new_tokens (int, optional): Maximum number of tokens to generate.
+            prompt (str): The prompt to give the LLM.
 
         Returns:
-            str: Model's response.
+            (str): Model's response.
         """
 
         # Update generator settings
@@ -197,32 +177,10 @@ class SyntheaModel:
 
         return str_output
 
-    def generate_from_character(self, prompt: str, character: str) -> str:
-        """
-        Generates a response based on a specified character's configuration.
-
-        Args:
-            prompt (str): User's input.
-            character (str): Name of the character profile.
-
-        Returns:
-            str: Model's response.
-
-        Raises:
-            FileNotFoundError: If the character configuration file is not found.
-        """
-        try:
-            # Load character-specific configuration
-            return self.generate(prompt)
-
-        except FileNotFoundError:
-            # pylint: disable-next=raise-missing-from
-            raise FileNotFoundError(f"No character named {character} was found.")
-
 
 if __name__ == "__main__":
-    chat_model = ChattyModel()
+    chat_model = SyntheaModel()
     chat_model.load_model()
     user_prompt = input("Enter a message: ")
-    response = chat_model.generate_from_defaults(user_prompt)
+    response = chat_model.generate(user_prompt)
     print(f"Response: {response}")
