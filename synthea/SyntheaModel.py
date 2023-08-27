@@ -66,7 +66,7 @@ class StopAtReply(StoppingCriteria):
         yield self
 
 
-class ChattyModel:
+class SyntheaModel:
     """
     A wrapper around Huggingface models designed for chatbot functionality.
 
