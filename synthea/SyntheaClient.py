@@ -22,7 +22,7 @@ class SyntheaClient(discord.Client):
     messages, the bot parses them and generates messages for them.
     """
 
-    model: ChattyModel = None
+    model: SyntheaModel = None
     parser: ChatbotParser = None
 
     async def setup_hook(self):
