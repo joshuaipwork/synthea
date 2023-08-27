@@ -1,13 +1,6 @@
 import argparse
-from collections import namedtuple
+from typing import IO, NoReturn
 import yaml
-
-from synthea.utilties import NO_UTILITY_SPECIFIED
-
-HelpModeData = namedtuple("HelpModeData", ["help_topic"])
-UtilityModeData = namedtuple("UtilityModeData", ["utility_name", "arguments"])
-SimpleGenerationModeData = namedtuple("SimpleGenerationModeData", ["prompt"])
-GenerationModeData = namedtuple("GenerationModeData", ["char_name", "prompt"])
 
 
 class CommandError(ValueError):
@@ -36,17 +29,15 @@ class CommandParser(argparse.ArgumentParser):
         """
         raise CommandError(message)
 
-    def exit(self):
+    def exit(self, status: int = 0, message: str | None = None) -> NoReturn:
         """
         Some actions, like asking for help or encountering an error, will exit the program after running
         This makes it so that it raises an exception instead so the bot can return that to the user.
         """
         raise ParserExitedException(self.format_help())
 
-    def print_help(self):
-        """
-        Overriden to prevent console spam.
-        """
+    def print_help(self, file: IO[str] | None = None) -> None:
+        """Overriden to prevent console spam"""
 
 
 class ChatbotParser:
@@ -55,35 +46,13 @@ class ChatbotParser:
             exit_on_error=False,
             prog="!syn",
             description="This bot is an interface for chatting with large language models.",
-            add_help=False,
-        )
-        self.parser.add_argument(
-            "-u",
-            "-util",
-            "--utility",
-            action="store",
-            nargs="?",
-            const=NO_UTILITY_SPECIFIED,
-            default=None,
-            help="Used to invoke utility functions. Note that commands will override the normal behavior \
-                of the bot where it generates a response to your message. Follow this argument with the name of \
-                the command to invoke. EG: --command create-character",
+            add_help=True,
         )
         self.parser.add_argument(
             "-c",
             "-char",
             "--character",
             action="store",
-            default=None,
-            help="The character for the bot to assume in its response.",
-        )
-        self.parser.add_argument(
-            "-h",
-            "-help",
-            "--help",
-            action="store",
-            nargs="?",
-            const="intro",
             default=None,
             help="The character for the bot to assume in its response.",
         )
