@@ -298,7 +298,10 @@ class SyntheaClient(discord.Client):
             )
 
             # if no embed, it wasn't speaking as a character
-            if not replied_message.embeds:
+            if (
+                not replied_message.embeds
+                or not replied_message.author.id == self.user.id
+            ):
                 return None
             embed = replied_message.embeds[0]
 
