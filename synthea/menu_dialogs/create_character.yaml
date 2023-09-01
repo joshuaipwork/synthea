@@ -1,0 +1,31 @@
+id:
+  text: Let's create a character together. Start by giving your character an ID. This is the ID that you will use when you talk to the character with `-char [ID]`. This cannot be changed later, so be careful! Try to keep this simple so it's easy to remember. It must be a single word with only letters, numbers, and underscores. Names are case insensitive. When you're ready, press the Enter button to input the ID.
+  modal_placeholder: syn
+  modal_title: Character ID
+  modal_max_length: 20
+invalid_id:
+  text: ❌ Sorry, that ID is invalid. Remember, IDs must be a single word with only letters, numbers, and underscores. IDs are case insensitive. Please enter a different ID.
+duplicate_id:
+  text: ❌ Sorry, that ID is already taken. Please enter a different ID.
+system_prompt:
+  text: Great! Now, give me instructions on how to play your character. Give instructions, context, and background for me to use while acting as this character. You can mention your character's personality, background, speaking style, or tell me what I should and should not do while acting as this character. These instructions will not be visible to others. Enter your instructions. 
+  modal_placeholder: You are Synthea, an AI assistant. When you speak, you provide detailed answers to user questions...
+  modal_title: AI instructions
+  modal_max_length: 4000
+description:
+  text: Good! Now, enter a short public description for your character. When people look at the list of characters, they will be able to see this description. 
+  modal_placeholder: A helpful AI assistant.
+  modal_title: Public description
+  modal_max_length: 200
+avatar_link:
+  text: Ok! Now send me a link to use as the character's avatar. It should be a publically accessible link. It could also be a link to a picture on this discord. I can't save images, so you'll have to give me a link rather than an uploaded image.
+  modal_placeholder: https://cdn.discordapp.com/emojis/962056705695428608.webp?size=160&quality=lossless.
+  modal_title: Avatar link
+  modal_max_length: 200
+display_name: 
+  text: Good! Now, give your character a name. This is the name that will show up at the top of their responses. It will also be shown to other users when they list characters on the server.
+  modal_placeholder: Synthea
+  modal_title: Name
+  modal_max_length: 50
+outro:
+  text: You're all done! If you want to change things later, you can use `/update_character` to open the character update utility. Your character is private and can only be talked to by you. When you're ready for others to talk to your new character, use `/add_character` on the server and anyone on that server will be able to talk to them it. Have a good time!
