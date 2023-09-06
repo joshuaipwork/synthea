@@ -91,6 +91,7 @@ class SyntheaModel:
         self.tokenizer = None
         self.model_config = None
         self.generator = None
+        self.llm = None
 
     def load_model(
         self,
@@ -115,8 +116,22 @@ class SyntheaModel:
         local_model_dir = os.path.join("./models", hf_model_dir)
 
         # Locate necessary files within the model directory
-        st_pattern = os.path.join(local_model_dir, "*.bin")
-        model_path = glob.glob(st_pattern)[0]
+        st_pattern_bin = os.path.join(local_model_dir, "*.bin")
+        st_pattern_gguf = os.path.join(local_model_dir, "*.gguf")
+
+        model_paths = glob.glob(st_pattern_bin) + glob.glob(st_pattern_gguf)
+        if model_paths:
+            model_path = model_paths[0]
+
+        # load the format file for the model, containing strings to stop on
+        with open(
+            f"formats/{self.config['format']}.yaml", "r", encoding="utf-8"
+        ) as file:
+            self.format = yaml.safe_load(file)
+        if "stop_on" in self.format:
+            stop = self.format["stop_on"]
+        else:
+            stop = []
 
         # Callbacks support token-wise streaming
         # Verbose is required to pass to the callback manager
@@ -124,7 +139,7 @@ class SyntheaModel:
 
         # TODO: Move this to config instead of hardcoded.
         # Change this value based on your model and your GPU VRAM pool.
-        n_gpu_layers = 200
+        n_gpu_layers = 500
         # Should be between 1 and n_ctx, consider the amount of VRAM in your GPU.
         n_batch = 512
 
@@ -153,6 +168,7 @@ class SyntheaModel:
             n_gpu_layers=n_gpu_layers,
             n_batch=n_batch,
             verbose=True,
+            stop=stop,
         )
 
     def generate(self, prompt: str) -> str:
