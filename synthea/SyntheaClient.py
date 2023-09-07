@@ -30,9 +30,7 @@ class SyntheaClient(discord.Client):
     """
 
     model: SyntheaModel = None
-    parser: ChatbotParser = None
     char_db: CharactersDatabase = None
-    context_manager: ContextManager = None
     synced = False
 
     async def setup_hook(self):
@@ -42,8 +40,6 @@ class SyntheaClient(discord.Client):
         self.model = SyntheaModel()
         self.model.load_model()
         self.char_db = CharactersDatabase()
-        self.parser = ChatbotParser()
-        self.context_manager = ContextManager(self.model, self.user.id)
 
     async def on_ready(self):
         """
@@ -142,7 +138,11 @@ class SyntheaClient(discord.Client):
 
         # parse the command the user sent
         command: str = message.clean_content
-        args = self.parser.parse(command)
+        parser = ChatbotParser()
+        args = parser.parse(command)
+
+        context_manager = ContextManager(self.model, self.user.id)
+
         char_id: str = args.character
         prompt: str = args.prompt
 
@@ -162,7 +162,7 @@ class SyntheaClient(discord.Client):
                 raise CharacterNotOnServerError()
 
             char_data = self.char_db.load_character(char_id)
-            prompt = await self.context_manager.compile_prompt_from_chat(
+            prompt = await context_manager.compile_prompt_from_chat(
                 message, system_prompt=char_data["system_prompt"]
             )
 
@@ -172,7 +172,7 @@ class SyntheaClient(discord.Client):
         # send a simple plaintext response without adopting a character
         else:
             # generate a response and send it to the user.
-            prompt = await self.context_manager.compile_prompt_from_chat(message)
+            prompt = await context_manager.compile_prompt_from_chat(message)
             print(f"Generating for {message.author} with prompt: \n{prompt}")
             response = self.model.generate(prompt=prompt)
             await self.send_response_as_base(response, message)
