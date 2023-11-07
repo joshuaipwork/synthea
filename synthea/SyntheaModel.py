@@ -183,7 +183,7 @@ class SyntheaModel:
     def _clean_stopping_tokens(self, s: str):
         """
         """
-        if self.config["stop_on"]:
+        if "stop_on" in self.config and self.config["stop_on"]:
             for stop_token in self.config["stop_on"]:
                 if s.endswith(stop_token):
                     return s[:-len(stop_token)]
