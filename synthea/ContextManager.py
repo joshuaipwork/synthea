@@ -15,7 +15,7 @@ class ThreadHistoryIterator:
     """
     An async iterator which follow replies in a thread until it reaches the oldest message
     in the thread. Unlike discord.Thread.history(), this iterator will parse commands into
-
+    a chat history.
     """
 
     def __init__(self, starting_message: discord.Message):
@@ -119,7 +119,7 @@ class ContextManager:
         message: discord.Message,
         history_iterator: AsyncIterator[discord.Message],
         system_prompt: Optional[str] = None,
-    ):
+    ) -> list[dict[str, str]]:
         """
         Generates a prompt which includes the context from previous messages from the history.
 
@@ -130,116 +130,22 @@ class ContextManager:
             system_prompt (str): The system prompt to use when generating the prompt
         """
         # pieces of the prompts are appended to the list then assembled in reverse order into the final prompt
-        history: list[str] = []
         token_count: int = 0
-
-        bot_message_tag = self.model.format["bot_message_tag"]
 
         # use provided system prompt
         if not system_prompt:
             system_prompt = self.config["system_prompt"]
 
-        # add the bot role tag so the AI knows to continue from this point.
-        history.append(f"{bot_message_tag} ")
-        token_count += len(bot_message_tag) // self.EST_CHARS_PER_TOKEN
 
-        # history contains the most recent messages that were sent before the current message.
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": self._get_text(message)[0]}
+        ]
+
+        # retrieve as many tokens as can fit into the context length from history
+        history_token_limit: int = self.context_length - self.model.config["max_new_tokens"]
         system_prompt_tokens: int = len(system_prompt) // self.EST_CHARS_PER_TOKEN
-        history_token_limit: int = (
-            self.context_length
-            - self.model.config["max_new_tokens"]
-            - system_prompt_tokens
-        )
-
-        # add the user's last message
-        user_tag: str = self.model.format["user_message_tag"]
-        text, added_tokens = self._get_text(message)
-        history.append(self._form_message(user_tag, text))
-        token_count += added_tokens
-
-        await self._follow_history(
-            history,
-            token_count=token_count,
-            token_limit=history_token_limit,
-            history_iterator=history_iterator,
-        )
-
-        # add the system prompt to the beginning of the prompt
-        history.append(self._form_prompt_header(system_prompt))
-
-        # convert the list into a single string
-        final_prompt = "".join(reversed(history))
-        return final_prompt
-
-    def _form_prompt_header(self, system_prompt: str) -> str:
-        """
-        Many prompt formats include a header which may include a system prompt,
-        along with some special formatting. This function takes in a system
-        prompt and formats it into a header according to the model's prompt format.
-
-        Args:
-            system_prompts (str): The system prompt to use for the header.
-        """
-        template = self.model.format["header_template"]
-        result = template.replace("<|system_prompt|>", system_prompt)
-
-        return result
-
-    def _get_user_tag(self, message: discord.Message) -> str:
-        """
-        Returns the name of the user who sent this message.
-
-        Args:
-            message (discord.Message): The message to retrieve the name of
-        Returns:
-            (str): A name for the user. This function prioritizes
-                nicknames over display names, display names over global names,
-                and global names over the deprecated names from before the username migration.
-                If none of the above, then 'USER' is used.
-        """
-        user_tag: str = ""
-        if not isinstance(message.channel, discord.DMChannel) and message.author.nick:
-            user_tag = message.author.nick
-        elif message.author.display_name:
-            user_tag = message.author.display_name
-        elif message.author.global_name:
-            user_tag = message.author.global_name
-        elif message.author.name:
-            user_tag = message.author.name
-        else:
-            user_tag = "user"
-
-        return user_tag
-
-    def _form_message(self, message_tag: str, text: str) -> str:
-        """
-        Generates a formatted message based on the prompt format of the model.
-        Args:
-            message_tag (str): The tag of the user who sent the message. Typically derived
-                from the prompt format and the identity of the user.
-            text (str): The text of the message.
-        """
-        template: str = self.model.format["message_template"]
-        template = template.replace("<|message_tag|>", message_tag)
-        result = template.replace("<|text|>", text)
-
-        return result
-
-    async def _follow_history(
-        self,
-        history: list[str],
-        token_limit: int,
-        history_iterator: AsyncIterator[discord.Message],
-        token_count: int = 0,
-    ):
-        """
-        Iterates through history_iterator, retrieving messages until either
-        the context length is exhausted or we run out of messages.
-
-        Returns:
-            history (list of str): A list of messages to include in the context,
-                in order of most recent to oldest messages in the history.
-        """
+        token_count += system_prompt_tokens
         async for message in history_iterator:
             # some messages in the chain may be commands for the bot
             # if so, parse only the prompt in each command in order to not confuse the bot
@@ -250,30 +156,18 @@ class ContextManager:
                 continue
 
             # stop retrieving context if the context would overflow
-            if added_tokens + token_count > token_limit:
+            if added_tokens + token_count > history_token_limit:
                 break
 
             # update the prompt with this message
             if message.author.id == self.bot_user_id:
-                history.append(
-                    self._form_message(self.model.format["bot_message_tag"], text)
-                )
+                messages.insert(1, {"role": "assistant", "content": text})
             else:
-                history.append(
-                    self._form_message(self.model.format["user_message_tag"], text)
-                )
+                messages.insert(1, {"role": "user", "content": text})
+            
+            token_count += added_tokens
 
-            # TODO: Figure out how to do multi-character conversations. Looks like not every model works well with that...
-            # if message.embeds:
-            #     # if the bot was speaking as a character, an embed is included with the character
-            #     embed = message.embeds[0]
-            #     character_name = embed.title.upper()
-            #     history.append(self._form_message(self.model.format['bot_message_tag'], text))
-            # else:
-            #     user_tag: str = self._get_user_tag(message)
-            #     history.append(f"{user_tag.upper()}: {text}")
-
-        return history
+        return messages
 
     def _get_text(self, message: discord.Message):
         """
