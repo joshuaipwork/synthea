@@ -1,16 +1,13 @@
-import yaml
+from torch import Tensor
+from ruamel.yaml import YAML
 from typing import Optional
-import yaml
+import torch
 from transformers import AutoTokenizer, logging
 import os, glob
 from transformers import StoppingCriteria
-from langchain.llms import LlamaCpp
-from langchain import PromptTemplate, LLMChain
-from langchain.callbacks.manager import CallbackManager
-from langchain.callbacks.streaming_stdout import StreamingStdOutCallbackHandler
+from transformers import AutoModelForCausalLM, AutoTokenizer, pipeline, Pipeline, PreTrainedTokenizer, PreTrainedModel, BitsAndBytesConfig
 
-
-class StopAtReply(StoppingCriteria):
+class StopOnTokens(StoppingCriteria):
     """
     Custom stopping criteria for text generation.
     Stops generation if the model predicts what the user might say next.
@@ -22,7 +19,7 @@ class StopAtReply(StoppingCriteria):
     """
 
     def __init__(
-        self, tokenizer: AutoTokenizer, prompt_format: dict[str, str], prompt: str
+        self, tokenizer: AutoTokenizer, stop_on: list[str], prompt: str
     ):
         """
         Initializes the stopping criteria.
@@ -30,14 +27,11 @@ class StopAtReply(StoppingCriteria):
         Args:
             tokenizer (AutoTokenizer): The tokenizer used for the model.
             prompt_format (dict[str, str]): Format of the prompt.
-            prompt (str): User's input.
+            prompt (str): The original prompt given to the model
         """
         super()
         self.tokenizer: AutoTokenizer = tokenizer
-        self.forbidden_strings = [
-            prompt_format["user_message_tag"],
-            prompt_format["bot_message_tag"],
-        ]
+        self.stop_on = stop_on
         self.prompt = prompt
 
     def __call__(self, input_ids, scores, **kwargs):
@@ -57,7 +51,7 @@ class StopAtReply(StoppingCriteria):
         # Remove the prompt from the generated text
         generated_text = generated_text.replace(self.prompt, "")
         # Check if any forbidden strings are present
-        return any(string in generated_text for string in self.forbidden_strings)
+        return any(string in generated_text for string in self.stop_on)
 
     def __len__(self):
         return 1
@@ -82,121 +76,126 @@ class SyntheaModel:
         """
         Initializes the chatbot model, loading configurations and settings from specified YAML files.
         """
+        yaml = YAML()
         with open("config.yaml", "r", encoding="utf-8") as file:
-            self.config = yaml.safe_load(file)
+            self.config = yaml.load(file)
         with open(
             f"formats/{self.config['format']}.yaml", "r", encoding="utf-8"
         ) as file:
-            self.format = yaml.safe_load(file)
-        self.tokenizer = None
-        self.model_config = None
-        self.generator = None
-        self.llm = None
+            self.format = yaml.load(file)
+        self.tokenizer: PreTrainedTokenizer = None
+        self.model: PreTrainedModel = None
+        self.pipe: Pipeline = None
 
-    def load_model(
-        self,
-        hf_model_dir: Optional[str] = None,
-        temperature: Optional[float] = None,
-        top_p: Optional[float] = None,
-        top_k: Optional[float] = None,
-        repetition_penalty: Optional[float] = None,
-        max_new_tokens: Optional[int] = None,
-        context_length: Optional[int] = None,
-    ):
+    def load_model(self, model_name_or_path: Optional[str] = None):
         """
-        Loads a model from a local directory.
+        Loads a model from 
+        If the model doesn't exist, it will be downloaded from huggingface.
 
         Args:
-            hf_model_dir (str, optional): The Huggingface repository from which the model was downloaded.
-                This is also the directory within the /models folder where the model was saved.
+            model_name_or_path (str, optional): The Huggingface repository to get
+                the model and tokenizer from. You can also use a local path.
         """
-        # If a model directory isn't specified, default to the config setting
-        if not hf_model_dir:
-            hf_model_dir = self.config["model_name_or_path"]
-        local_model_dir = os.path.join("./models", hf_model_dir)
+        # To use a different branch, change revision
+        # For example: revision="gptq-4bit-32g-actorder_True"
+        if not model_name_or_path:
+            model_name_or_path = self.config["model_name_or_path"]
 
-        # Locate necessary files within the model directory
-        st_pattern_bin = os.path.join(local_model_dir, "*.bin")
-        st_pattern_gguf = os.path.join(local_model_dir, "*.gguf")
-
-        model_paths = glob.glob(st_pattern_bin) + glob.glob(st_pattern_gguf)
-        if model_paths:
-            model_path = model_paths[0]
-
-        # load the format file for the model, containing strings to stop on
-        with open(
-            f"formats/{self.config['format']}.yaml", "r", encoding="utf-8"
-        ) as file:
-            self.format = yaml.safe_load(file)
-        if "stop_on" in self.format:
-            stop = self.format["stop_on"]
-        else:
-            stop = []
-
-        # Callbacks support token-wise streaming
-        # Verbose is required to pass to the callback manager
-        # callback_manager = CallbackManager([StreamingStdOutCallbackHandler()])
-
-        # TODO: Move this to config instead of hardcoded.
-        # Change this value based on your model and your GPU VRAM pool.
-        n_gpu_layers = 500
-        # Should be between 1 and n_ctx, consider the amount of VRAM in your GPU.
-        n_batch = 512
-
-        # If parameters aren't specified, default to the model's configuration
-        if not temperature:
-            temperature = self.config["default_temperature"]
-        if not top_p:
-            top_p = self.config["default_top_p"]
-        if not top_k:
-            top_k = self.config["default_top_k"]
-        if not repetition_penalty:
-            repetition_penalty = self.config["default_repetition_penalty"]
-        if not max_new_tokens:
-            max_new_tokens = self.config["max_new_tokens"]
-        if not context_length:
-            context_length = self.config["context_length"]
-
-        # Make sure the model path is correct for your system!
-        self.llm = LlamaCpp(
-            model_path=model_path,
-            temperature=temperature,
-            max_tokens=max_new_tokens,
-            n_ctx=context_length,
-            top_p=top_p,
-            top_k=top_k,
-            n_gpu_layers=n_gpu_layers,
-            n_batch=n_batch,
-            verbose=True,
-            stop=stop,
+        bnb_config = BitsAndBytesConfig(
+            load_in_8bit=True,
+            # bnb_4bit_quant_type="nf4",
+            # bnb_4bit_use_double_quant=True,
         )
 
-    def generate(self, prompt: str) -> str:
+        self.tokenizer = AutoTokenizer.from_pretrained(model_name_or_path)
+        self.model = AutoModelForCausalLM.from_pretrained(
+                model_name_or_path,
+                load_in_8bit=True,
+                quantization_config=bnb_config,
+                torch_dtype=torch.bfloat16,
+                device_map="auto",
+                trust_remote_code=True,
+            )
+
+    def generate(self, chat_history:  list[dict[str, str]]) -> str:
         """
-        Generates a response from the model using specified settings or defaults.
+        Generates a response from the model. Settings are based on the
+        config.
 
         Args:
-            prompt (str): The prompt to give the LLM.
+            chat_history (list of dict of str to str): The chat history to
+                generate based on. Refer to huggingface documents on chat templates
+                for more information.
 
         Returns:
-            (str): Model's response.
+            (str): the model's response
         """
+        temperature = self.config["default_temperature"]
+        top_p = self.config["default_top_p"]
+        top_k = self.config["default_top_k"]
+        repetition_penalty = self.config["default_repetition_penalty"]
+        max_new_tokens = self.config["max_new_tokens"]
+        context_length = self.config["context_length"]
 
-        # Update generator settings
-        prompt_template = PromptTemplate(
-            template="""{prompt}""", input_variables=["prompt"]
+        # TODO: Move chat template to config
+        self.tokenizer.chat_template = self.config["chat_template"]
+        gen_input: Tensor = self.tokenizer.apply_chat_template(
+            chat_history,
+            truncation=True,
+            return_tensors="pt",
+            max_length=context_length,
+        )
+        gen_input = gen_input.to("cuda")
+
+        prompt_str = self.tokenizer.decode(gen_input[0])
+
+        # create stopping criteria
+        stopping_criteria = None
+        if 'stop_on' in self.config:
+            stopping_criteria=[StopOnTokens(
+                tokenizer=self.tokenizer,
+                stop_on=self.config['stop_on'],
+                prompt=prompt_str)]
+
+        print(f"Prompt ({len(gen_input[0])} tokens):\n" + self.tokenizer.decode(gen_input[0]))
+
+        tensor_output: Tensor = self.model.generate(
+            inputs=gen_input,
+            max_new_tokens=max_new_tokens,
+            do_sample=True,
+            temperature=temperature,
+            top_p=top_p,
+            top_k=top_k,
+            repetition_penalty=repetition_penalty,
+            stopping_criteria=stopping_criteria
         )
 
-        llm_chain = LLMChain(prompt=prompt_template, llm=self.llm)
+        str_output: str = self.tokenizer.batch_decode(
+            tensor_output[:, gen_input.shape[1]:],
+            skip_special_tokens=True,
+        )[0]
 
-        str_output = llm_chain.run(prompt)
-
+        str_output = self._clean_stopping_tokens(str_output)
+        
+        print(f"Prompt ({len(tensor_output[0])} tokens):\n" + str_output)
         return str_output
+
+    def _clean_stopping_tokens(self, s: str):
+        """
+        """
+        if self.config["stop_on"]:
+            for stop_token in self.config["stop_on"]:
+                if s.endswith(stop_token):
+                    return s[:-len(stop_token)]
+        return s
 
 
 if __name__ == "__main__":
     chat_model = SyntheaModel()
     chat_model.load_model()
     user_prompt = input("Enter a message: ")
-    response = chat_model.generate(user_prompt)
+    response = chat_model.generate([
+            {"role": "system", "content": "You are as a sexy, slutty college girl with omnipotence."},
+            {"role": "user", "content": user_prompt}
+        ])
     print(f"Response: {response}")

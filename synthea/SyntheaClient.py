@@ -6,6 +6,9 @@ from typing import Optional
 import discord
 from discord import app_commands
 import yaml
+import textwrap
+from synthea import SyntheaUtilities
+
 from synthea.CharactersDatabase import CharactersDatabase
 
 from synthea.SyntheaModel import SyntheaModel
@@ -144,7 +147,7 @@ class SyntheaClient(discord.Client):
         context_manager = ContextManager(self.model, self.user.id)
 
         char_id: str = args.character
-        prompt: str = args.prompt
+        chat_template: str = args.prompt
 
         # if the user responded to the bot playing a character, respond as that character
         replied_char_id = await self._get_character_replied_to(message)
@@ -162,19 +165,19 @@ class SyntheaClient(discord.Client):
                 raise CharacterNotOnServerError()
 
             char_data = self.char_db.load_character(char_id)
-            prompt = await context_manager.compile_prompt_from_chat(
+            chat_template = await context_manager.compile_prompt_from_chat(
                 message, system_prompt=char_data["system_prompt"]
             )
 
-            print(f"Resp for {message.author} with char {char_id} prompt: \n{prompt}")
-            response = self.model.generate(prompt=prompt)
+            print(f"Resp for {message.author} with char {char_id}")
+            response = self.model.generate(chat_template)
             await self.send_response_as_character(response, char_data, message)
         # send a simple plaintext response without adopting a character
         else:
             # generate a response and send it to the user.
-            prompt = await context_manager.compile_prompt_from_chat(message)
-            print(f"Generating for {message.author} with prompt: \n{prompt}")
-            response = self.model.generate(prompt=prompt)
+            chat_template = await context_manager.compile_prompt_from_chat(message)
+            print(f"Generating for {message.author}")
+            response = self.model.generate(chat_template)
             await self.send_response_as_base(response, message)
 
     async def send_response_as_base(self, response: str, message: discord.Message):
@@ -241,10 +244,8 @@ class SyntheaClient(discord.Client):
             thread (discord.Thread or None): If provided, the response will be sent in this thread.
         """
         # split up the response into messages and send them individually
-        print(f"Response ({len(response_text)} chars):\n{response_text}")
+        # print(f"Response ({len(response_text)} chars):\n{response_text}")
 
-        msg_index = 0
-        last_message = None
         if not embed and not response_text:
             # TODO: Decide if sending a default response or raising an error is better.
             # For now, ominous default response because it's funny
@@ -256,22 +257,24 @@ class SyntheaClient(discord.Client):
             await message_to_reply.reply(mention_author=True, embed=embed)
             return
 
-        while msg_index * CHAR_LIMIT < len(response_text):
-            message_text = response_text[
-                msg_index * CHAR_LIMIT : (msg_index + 1) * CHAR_LIMIT
-            ]
+
+        # output message with no embeds
+        msg_index = 0
+        last_message = None
+        messages = SyntheaUtilities.split_text(response_text)
+        for message in messages:
             if message_to_reply:
                 # a message in a channel
                 # only reply to the first message to prevent spamming
                 if msg_index == 0:
                     last_message = await message_to_reply.reply(
-                        message_text,
+                        message,
                         mention_author=True,
                         embed=embed,
                     )
                 else:
                     last_message = await last_message.reply(
-                        message_text, mention_author=False, embed=embed
+                        message, mention_author=False, embed=embed
                     )
             else:
                 raise ValueError("No message found to reply to!")
