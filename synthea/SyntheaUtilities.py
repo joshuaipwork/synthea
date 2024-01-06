@@ -1,4 +1,8 @@
-def split_text(text, max_length=2000):
+def split_text(text, max_length=2000) -> list[str]:
+    return [text[i:i+max_length] for i in range(0, len(text), max_length)]
+
+
+def split_text_smartly(text, max_length=2000) -> list[str]:
     """
     Split the text into pieces of at most max_length characters. 
     The function prioritizes splitting at paragraph breaks, then periods, and finally spaces.

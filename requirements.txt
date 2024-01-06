@@ -14,3 +14,4 @@ auto-gptq
 accelerate
 awq
 bitsandbytes
+exllamav2

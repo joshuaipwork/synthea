@@ -5,4 +5,4 @@ CONDA_ENV_NAME="synthea_$VERSION"
 # activate the environment and start the program
 conda init
 conda activate "$CONDA_ENV_NAME"
-python ./synthea/SyntheaClient.py
+python ./synthea/Synthea.py
