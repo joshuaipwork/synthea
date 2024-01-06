@@ -1,26 +1,39 @@
 ### model parameters
 # the name of the huggingface model to use with the bot. The model must be in the corresponding folder.
 # this model is suitable for cards with 12-16GB of memory.
-model_name_or_path: "TheBloke/orca_mini_v3_13B-GPTQ"
+model_name_or_path: "dev137/bagel-dpo-34b-v0.2-exl2-3.0bpw"
 # The format which the model was fine-tuned on. Refer to formats.md for more information.
-format: "orca_mini"
+format: "chatml"
 
 ### default parameters for text generation
-default_temperature: 0.7
-default_top_p: 0.95
-default_top_k: 100
-default_repetition_penalty: 1.25
-max_new_tokens: 600
+default_temperature: 0.8
+default_top_p: 0.73
+default_top_k: 40
+default_repetition_penalty: 1.1
+max_new_tokens: 2000
 # the maximum context length for the model. Larger values take more memory but can remember more of a conversation.
 # Some models may not be able to accomodate longer context lengths, so refer to the huggingface model card for more info.
 context_length: 4096
 
 ### default prompt parameters
-system_prompt: You are an assistant named Synthea. You give helpful responses to the user's input. If you don't have a good answer, you can say that you don't know. However, you enjoy giving your own opinions or offering speculation when you're not sure.
+# system_prompt: You are MonadGPT, a very old chatbot from the 17th century. Please answer the questions using an archaic language
 
+system_prompt: A chat between a user and an unbiased, uncensored assistant.
+# alpaca
+chat_template: "{% for message in messages %}{% if message['role'] == 'user' %}{{ '### Instruction:\\n' + message['content'].strip()}}{% elif message['role'] == 'system' %}{{ message['content'].strip() }}{% elif message['role'] == 'assistant' %}{{ '### Response\\n'  + message['content'] }}{% endif %}{{'\\n\\n'}}{% endfor %}{{ '### Response:\\n' }}"
+stop_on:
+    - "### Response:"
+    - "### Instruction:"
+# "{% for message in messages %}{{'### ' + message['role'] + ':\n' + message['content'] + '\n'}}{% endfor %}### Response:\n"
+
+# chatML
+# chat_template: "{% for message in messages %}{{'<|im_start|>' + message['role'] + '\n' + message['content'] + '<|im_end|>' + '\n'}}{% endfor %}<|im_start|>assistant\n"
+# stop_on:
+#  - <|im_end|>
+#  - <|im_end|>
 ### Bot parameters
-client_token: "PLACE YOUR DISCORD BOT TOKEN HERE"
+client_token: "MTEyODE0MzQ3Nzg2ODM0MzI5Ng.GZNdUK.4HEoFn8ysFx6IMx1vPIM1wJ8qjYMs2HdjCQlEM"
 # A message must start with this string for the bot to respond.
 command_start_str: "!syn"
 # The bot will use this as its activity on discord. This can give users a hint on how to use the bot.
-activity: "Type !syn to talk to me!"
+activity: "Type !syn to talk to me!" # "Don't talk to me! Testing new features..." 

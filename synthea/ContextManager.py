@@ -5,8 +5,8 @@ message history and persona.
 """
 from typing import AsyncIterator, Optional
 import discord
+from jinja2 import Environment
 import yaml
-from synthea.SyntheaModel import SyntheaModel
 
 from synthea.CommandParser import ChatbotParser, CommandError, ParserExitedException
 
@@ -80,24 +80,23 @@ class ContextManager:
     # A rough measure of how many character are in each token.
     EST_CHARS_PER_TOKEN = 3
 
-    def __init__(self, model: SyntheaModel, bot_user_id: int):
+    def __init__(self, bot_user_id: int):
         """
         model (str): The model that is generating the text. Used to determine the prompt format
             and other configuration options.
         bot_user_id (str): The discord user id of the bot. Used to determine if a message came from
             the bot or from a user.
         """
-        self.model: SyntheaModel = model
-        self.context_length: int = self.model.config["context_length"]
-        self.bot_user_id: int = bot_user_id
-
         # TODO: Split the model config and the general bot config.
         with open("config.yaml", "r", encoding="utf-8") as file:
             self.config = yaml.safe_load(file)
 
-    async def compile_prompt_from_chat(
+        self.context_length: int = self.config["context_length"]
+        self.bot_user_id: int = bot_user_id
+
+    async def generate_prompt_from_chat(
         self, message: discord.Message, system_prompt: Optional[str] = None
-    ):
+    ) -> str:
         """
         Generates a prompt which includes the context from previous messages in a reply chain.
         Messages outside of the reply chain are ignored.
@@ -107,14 +106,44 @@ class ContextManager:
             system_prompt (str): The system prompt to use when generating the prompt
         """
         history_iterator: ReplyChainIterator = ReplyChainIterator(message)
-        final_prompt = await self.compile_prompt(
+        chat_history: list[dict[str, str]] = await self.compile_chat_history(
             message=message,
             history_iterator=history_iterator,
             system_prompt=system_prompt,
         )
-        return final_prompt
 
-    async def compile_prompt(
+        # load chat template from config
+        if ("chat_template" in self.config):
+            chat_template = self.config["chat_template"]
+        else:
+            print("Unable to find chat template in config, using ChatML.")
+            chat_template = "{% for message in messages %}{{'<|im_start|>' + message['role'] + '\n' + message['content'] + '<|im_end|>' + '\n'}}{% endfor %}<|im_start|>assistant\n"
+
+        prompt: str = await self.convert_chat_history_to_prompt(chat_history, chat_template)
+
+        return prompt
+
+    async def convert_chat_history_to_prompt(self, chat_history: list[dict[str, str]], chat_template: str) -> str:
+        """
+        Takes a chat template and converts it to a prompt. 
+
+        Args:
+            chat_history (list of dict of str to str): A list of chat messages to convert to a prompt.
+                Refer to huggingface's chat template feature for information on how this should be formatted.
+            chat_template (str): The jinja2 chat template to apply to the chat history.
+        """
+        chat_template = "{% for message in messages %}{% if message['role'] == 'user' %}{{ '### Instruction:\\n' + message['content'].strip()}}{% elif message['role'] == 'system' %}{{ message['content'].strip() }}{% elif message['role'] == 'assistant' %}{{ '### Response\\n'  + message['content'] }}{% endif %}{{'\\n\\n'}}{% endfor %}{{ '### Response:\\n' }}"
+
+        # Create a Jinja2 environment and compile the template
+        env = Environment()
+        template = env.from_string(chat_template)
+
+        # Render the template with your messages
+        formatted_chat = template.render(messages=chat_history)
+
+        return formatted_chat
+
+    async def compile_chat_history(
         self,
         message: discord.Message,
         history_iterator: AsyncIterator[discord.Message],
@@ -136,14 +165,13 @@ class ContextManager:
         if not system_prompt:
             system_prompt = self.config["system_prompt"]
 
-
         messages = [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": self._get_text(message)[0]}
         ]
 
         # retrieve as many tokens as can fit into the context length from history
-        history_token_limit: int = self.context_length - self.model.config["max_new_tokens"]
+        history_token_limit: int = self.context_length - self.config["max_new_tokens"]
         system_prompt_tokens: int = len(system_prompt) // self.EST_CHARS_PER_TOKEN
         token_count += system_prompt_tokens
         async for message in history_iterator:

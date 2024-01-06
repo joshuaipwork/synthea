@@ -101,18 +101,18 @@ class SyntheaModel:
         if not model_name_or_path:
             model_name_or_path = self.config["model_name_or_path"]
 
-        bnb_config = BitsAndBytesConfig(
-            load_in_8bit=True,
-            # bnb_4bit_quant_type="nf4",
-            # bnb_4bit_use_double_quant=True,
-        )
+        # bnb_config = BitsAndBytesConfig(
+        #     load_in_8bit=True,
+        #     # bnb_4bit_quant_type="nf4",
+        #     # bnb_4bit_use_double_quant=True,
+        # )
 
         self.tokenizer = AutoTokenizer.from_pretrained(model_name_or_path)
         self.model = AutoModelForCausalLM.from_pretrained(
                 model_name_or_path,
-                load_in_8bit=True,
-                quantization_config=bnb_config,
-                torch_dtype=torch.bfloat16,
+                # load_in_4bit=True,
+                # quantization_config=bnb_config,
+                # torch_dtype=torch.bfloat16,
                 device_map="auto",
                 trust_remote_code=True,
             )

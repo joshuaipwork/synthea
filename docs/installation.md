@@ -25,6 +25,7 @@ This documentation will guide you through the process of setting up Python and i
    ```bash
    sudo apt update
    sudo apt install python3
+   sudo apt install python3-pip
    ```
 
 2. **Using Conda (Optional but Recommended)**:

@@ -1,12 +1,15 @@
 """
 The discord client which contains the bulk of the logic for the chatbot.
 """
+import multiprocessing
+import time
 import traceback
 from typing import Optional
 import discord
 from discord import app_commands
 import yaml
-import textwrap
+import asyncio
+import janus
 from synthea import SyntheaUtilities
 
 from synthea.CharactersDatabase import CharactersDatabase
@@ -14,6 +17,8 @@ from synthea.CharactersDatabase import CharactersDatabase
 from synthea.SyntheaModel import SyntheaModel
 from synthea.CommandParser import ChatbotParser
 from synthea.ContextManager import ContextManager
+from synthea.dtos.GenerationRequest import GenerationRequest
+from synthea.dtos.ResponseUpdate import ResponseUpdate
 from synthea.modals import CharCreationView, UpdateCharModal, CharCreationStep
 from synthea.character_errors import (
     CharacterNotFoundError,
@@ -32,17 +37,31 @@ class SyntheaClient(discord.Client):
     messages, the bot parses them and generates messages for them.
     """
 
-    model: SyntheaModel = None
     char_db: CharactersDatabase = None
     synced = False
+    tree: app_commands.CommandTree = None
 
-    async def setup_hook(self):
-        """
-        When the bot is started and logs in, load the model.
-        """
-        self.model = SyntheaModel()
-        self.model.load_model()
+    # increments each time we respond to a user. used for the next index in in_progress_response
+    response_index: int = 0
+
+    # a message chain corresponding to a response to the user. The first element in the list
+    # is the original message from the user, and following elements are the response to the
+    # user, possibly spanning multiple messages.
+    in_progress_responses: dict[int, list[discord.Message]] = {}
+
+    def __init__(self, intents, request_queue: multiprocessing.Queue, response_queue: multiprocessing.Queue):
+        super().__init__(intents=intents)
+        # a queue to send user prompts to SyntheaServer
+        self.request_queue: multiprocessing.Queue = request_queue
+        # a queue to receive streamed inferences from SyntheaServer
+        self.response_queue: multiprocessing.Queue = response_queue
+
         self.char_db = CharactersDatabase()
+
+    # async def setup_hook(self):
+    #     """
+    #     When the bot is started and logs in, load the model.
+    #     """
 
     async def on_ready(self):
         """
@@ -54,11 +73,50 @@ class SyntheaClient(discord.Client):
 
         # sync slash commands only the first time that we are ready
         if not self.synced:
-            await tree.sync()
+            await self.tree.sync()
             self.synced = True
             print("Synced command tree")
 
+        await self.stream_responses()
+
         print(f"Logged on as {self.user}!")
+
+    async def stream_responses(self) -> None:
+        while True:
+            message_update: ResponseUpdate = await asyncio.to_thread(self.response_queue.get)  # Wait for a message
+
+            # if the response was aborted by user, no need to update anything
+            if (message_update.response_index not in self.in_progress_responses):
+                continue
+
+            split_text: list[str] = SyntheaUtilities.split_text(message_update.new_message)
+            message_chain: list[discord.Message] = self.in_progress_responses[message_update.response_index]
+
+            # if this is the first message we've sent to the user, create a new message and let the user know we're working on it
+            if len(message_chain) == 1:
+                await message_chain[0].remove_reaction("⏳", self.user)
+                await message_chain[0].add_reaction("📝")
+                message_chain.append(await message_chain[0].reply(split_text[-1]))
+
+            # if we've overflown the length of the most recent message, create a new message
+            if len(message_chain) < len(split_text) + 1:
+                # TODO: update the n-1th message when the splitting logic becomes better
+                message_chain.append(await message_chain[-1].reply(split_text[-1]))
+
+            # otherwise, update the most recent message with the new text
+            else:
+                await message_chain[-1].edit(content=split_text[-1])
+
+            if message_update.message_is_completed:
+                # update the original message from the user with a completed emoji
+                try:
+                    await message_chain[0].remove_reaction("📝", self.user)
+                    await message_chain[0].add_reaction("✅")
+                except Exception as e:
+                    continue
+                # since message is completed, no need to continue responding to it
+                del self.in_progress_responses[message_update.response_index]
+
 
     async def on_reaction_add(self, reaction: discord.Reaction, _user):
         """
@@ -119,7 +177,6 @@ class SyntheaClient(discord.Client):
         try:
             await message.add_reaction("⏳")
             await self.respond_to_user(message)
-            await message.add_reaction("✅")
 
         # if error, let the user know what went wrong
         # pylint: disable-next=broad-exception-caught
@@ -127,11 +184,8 @@ class SyntheaClient(discord.Client):
             await message.add_reaction("❌")
             traceback.print_exc(limit=4)
             await message.reply(f"❌ {err}", mention_author=True)
-        # after running, indicate the bot is done with their command.
-        finally:
-            await message.remove_reaction("⏳", self.user)
 
-    async def respond_to_user(self, message: discord.Message):
+    async def respond_to_user(self, message_from_user: discord.Message):
         """
         Generates and send a response to a user message from the chatbot
 
@@ -140,45 +194,62 @@ class SyntheaClient(discord.Client):
         """
 
         # parse the command the user sent
-        command: str = message.clean_content
+        command: str = message_from_user.clean_content
         parser = ChatbotParser()
         args = parser.parse(command)
 
-        context_manager = ContextManager(self.model, self.user.id)
+        context_manager = ContextManager(self.user.id)
 
         char_id: str = args.character
-        chat_template: str = args.prompt
+        prompt: str = args.prompt
 
         # if the user responded to the bot playing a character, respond as that character
-        replied_char_id = await self._get_character_replied_to(message)
+        replied_char_id = await self._get_character_replied_to(message_from_user)
         if replied_char_id:
             char_id = replied_char_id
 
         # send a response as a character
-        if char_id:
-            can_access = self.char_db.can_access_character(
-                char_id=char_id,
-                user_id=message.author.id,
-                server_id=message.guild.id if message.guild else None,
-            )
-            if not can_access:
-                raise CharacterNotOnServerError()
+        # if char_id:
+        #     can_access = self.char_db.can_access_character(
+        #         char_id=char_id,
+        #         user_id=message.author.id,
+        #         server_id=message.guild.id if message.guild else None,
+        #     )
+        #     if not can_access:
+        #         raise CharacterNotOnServerError()
 
-            char_data = self.char_db.load_character(char_id)
-            chat_template = await context_manager.compile_prompt_from_chat(
-                message, system_prompt=char_data["system_prompt"]
-            )
+        #     char_data = self.char_db.load_character(char_id)
+        #     prompt = await context_manager.compile_prompt_from_chat(
+        #         message, system_prompt=char_data["system_prompt"]
+        #     )
 
-            print(f"Resp for {message.author} with char {char_id}")
-            response = self.model.generate(chat_template)
-            await self.send_response_as_character(response, char_data, message)
-        # send a simple plaintext response without adopting a character
-        else:
-            # generate a response and send it to the user.
-            chat_template = await context_manager.compile_prompt_from_chat(message)
-            print(f"Generating for {message.author}")
-            response = self.model.generate(chat_template)
-            await self.send_response_as_base(response, message)
+        #     print(f"Resp for {message.author} with char {char_id}")
+        #     response = await self.queue_for_generation(prompt)
+        #     # await self.send_response_as_character(response, char_data, message)
+        # # send a simple plaintext response without adopting a character
+        # else:
+        # generate a response and send it to the user.
+        prompt = await context_manager.generate_prompt_from_chat(message_from_user)
+        print(f"Generating for {message_from_user.author}")
+        await self.queue_for_generation(message_from_user, prompt)
+        # await self.send_response_as_base(response, message)
+
+    async def queue_for_generation(self, message_from_user: discord.Message, prompt: str) -> None:
+        """
+        Sends a prompt to the generation queue. When the server is available,
+        it will take up the prompt and generate a response.
+        """
+        # compile the prompt from the chat history
+        self.in_progress_responses[self.response_index] = [message_from_user]
+
+        self.request_queue.put(
+            GenerationRequest(
+                self.response_index,
+                prompt
+            )
+        )
+
+        self.response_index += 1
 
     async def send_response_as_base(self, response: str, message: discord.Message):
         """
@@ -316,171 +387,3 @@ class SyntheaClient(discord.Client):
             print(exc)
 
         return None
-
-
-with open("config.yaml", "r", encoding="utf-8") as file:
-    token = yaml.safe_load(file)["client_token"]
-
-# set up the discord client. The client and takes actions on our behalf
-intents = discord.Intents.all()
-intents.message_content = True
-intents.presences = True
-intents.members = True
-client = SyntheaClient(intents=intents)
-
-# set up slash commands. It's pretty gross having this here along with the client,
-# but it doesn't seem like there's a better way to do it
-tree = app_commands.CommandTree(client)
-
-
-@tree.command(
-    name="create_character",
-    description="Create a character from scratch.",
-)
-async def create_character_ui(interaction: discord.Interaction):
-    """Opens the create_character UI for the user."""
-    with open(
-        "synthea/menu_dialogs/create_character.yaml", "r", encoding="utf-8"
-    ) as dialog_file:
-        dialogs = yaml.safe_load(dialog_file)
-    await interaction.response.send_message(
-        dialogs[CharCreationStep.ID.value]["text"],
-        view=CharCreationView(),
-        ephemeral=True,
-    )
-
-
-@tree.command(
-    name="update_character",
-    description="Update a character",
-)
-async def update_character_ui(interaction: discord.Interaction, char_id: str):
-    """Opens the update_character UI for the user."""
-    try:
-        # will raise errors if the character can't be updated
-        modal = UpdateCharModal(char_id, interaction)
-        await interaction.response.send_modal(modal)
-    except CharacterNotFoundError as err:
-        await interaction.response.send_message(f"❌ {err}", ephemeral=True)
-    except ForbiddenCharacterError as err:
-        await interaction.response.send_message(f"❌ {err}", ephemeral=True)
-
-
-@tree.command(
-    name="delete_character",
-    description="Delete an character you own",
-    guild=discord.Object(id=1085939230284460102),
-)
-async def delete_character(interaction: discord.Interaction, char_id: str):
-    """Deletes a character, throwing an error if not owned"""
-    try:
-        client.char_db.delete_character(char_id, interaction.user.id)
-        await interaction.response.send_message(
-            f"{char_id} was deleted.", ephemeral=True
-        )
-    except CharacterNotFoundError as err:
-        await interaction.response.send_message(f"❌ {err}", ephemeral=True)
-    except ForbiddenCharacterError as err:
-        await interaction.response.send_message(f"❌ {err}", ephemeral=True)
-
-
-@tree.command(
-    name="add_character",
-    description="Let anyone on this server use your character",
-)
-async def add_character(interaction: discord.Interaction, char_id: str):
-    try:
-        if not interaction.guild:
-            await interaction.response.send_message(
-                "❌ You are not speaking from a server!", ephemeral=True
-            )
-        # will raise errors if the character can't be updated
-        client.char_db.add_character_to_server(
-            char_id=char_id, user_id=interaction.user.id, server_id=interaction.guild.id
-        )
-        await interaction.response.send_message(
-            f"{char_id} has been added to the server!"
-        )
-    except CharacterNotFoundError as err:
-        await interaction.response.send_message(f"❌ {err}", ephemeral=True)
-    except ForbiddenCharacterError as err:
-        await interaction.response.send_message(f"❌ {err}", ephemeral=True)
-
-
-@tree.command(
-    name="remove_character",
-    description="Stop allowing anyone from this server to use your character",
-)
-async def remove_character(interaction: discord.Interaction, char_id: str):
-    try:
-        if not interaction.guild:
-            await interaction.response.send_message(
-                "❌ You are not speaking from a server!", ephemeral=True
-            )
-        # will raise errors if the character can't be updated
-        client.char_db.remove_character_from_server(
-            char_id=char_id, user_id=interaction.user.id, server_id=interaction.guild.id
-        )
-        await interaction.response.send_message(
-            f"{char_id} has been removed from the server!"
-        )
-    except CharacterNotFoundError as err:
-        await interaction.response.send_message(f"❌ {err}", ephemeral=True)
-    except ForbiddenCharacterError as err:
-        await interaction.response.send_message(f"❌ {err}", ephemeral=True)
-
-
-@tree.command(
-    name="list_characters",
-    description="Show a list of public characters on this server",
-)
-async def send_server_char_list(interaction: discord.Interaction):
-    """Sends a list of public characters on the server to the interacter"""
-    # public so others can see it
-    # TODO: Paginate
-    if not interaction.guild:
-        await interaction.response.send_message(
-            """❌ You are not on a server.
-            Did you want to get a list of your owned characters?
-            Use /list_owned_characters instead.""",
-            ephemeral=True,
-        )
-
-    char_list = client.char_db.list_server_characters(interaction.guild.id)
-    if not char_list:
-        await interaction.response.send_message(
-            "There are no public characters on this server.", ephemeral=True
-        )
-
-    await interaction.response.send_message(format_list(char_list), ephemeral=True)
-
-
-@tree.command(
-    name="list_owned_characters",
-    description="Show a list of characters you own",
-)
-async def send_owned_char_list(interaction: discord.Interaction):
-    """Sends a list of characters the user owns to the interacter"""
-    char_list = client.char_db.list_user_characters(interaction.user.id)
-    if not char_list:
-        await interaction.response.send_message(
-            "You don't own any characters.", ephemeral=True
-        )
-
-    await interaction.response.send_message(format_list(char_list), ephemeral=True)
-
-
-def format_list(char_list: list[dict[str, str]]) -> str:
-    """Generates a formatted text version of a list of characters and descriptions"""
-    output = ""
-    # I'd love to make a table, but discord doesn't support it. Markdown lists are the best I have
-    for char in char_list:
-        output += f'\n{char["id"]}'
-        if "display_name" in char and char["display_name"]:
-            output += f" ({char['display_name']})"
-        if "description" in char and char["description"]:
-            output += f'\n> {char["description"]}'
-    return output
-
-
-client.run(token)
