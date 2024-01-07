@@ -92,6 +92,16 @@ class SyntheaClient(discord.Client):
             split_text: list[str] = SyntheaUtilities.split_text(message_update.new_message)
             message_chain: list[discord.Message] = self.in_progress_responses[message_update.response_index]
 
+            # if generation encounters an error, let the user know and cancel further generations
+            if message_update.error is not None:
+                await message_chain[0].remove_reaction("⏳", self.user)
+                await message_chain[0].remove_reaction("📝", self.user)
+                await message_chain[0].add_reaction("❌")
+                await message_chain[0].reply(message_update.error, mention_author=True)
+                traceback.print_exc(limit=4)
+                del self.in_progress_responses[message_update.response_index]
+                continue
+
             # if this is the first message we've sent to the user, create a new message and let the user know we're working on it
             if len(message_chain) == 1:
                 await message_chain[0].remove_reaction("⏳", self.user)
