@@ -1,4 +1,4 @@
-def split_text(text, max_length=2000) -> list[str]:
+def split_text(text, max_length=1800) -> list[str]:
     return [text[i:i+max_length] for i in range(0, len(text), max_length)]
 
 
