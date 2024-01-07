@@ -26,29 +26,39 @@ class SyntheaServer:
     async def run(self):
         while True:
             generation_request: GenerationRequest = await asyncio.to_thread(self.request_queue.get)  # Wait for a message
-            print("Received message")
-            self.model.begin_stream(generation_request.context)
+            print(f"Received message: {generation_request.context}")
 
-            # pull the next chunk of text
-            eos: bool = False
-            response: str = ""
-            while not eos:
-                chunk: list[str] = []
-                for i in range(0,100):
-                    token, eos, _ = self.model.generator.stream()
-                    if eos: break
-                    chunk.append(token)
+            try:
+                self.model.begin_stream(generation_request.context)
 
-                # after some tokens are generated, tell client to stream message to user
-                response += "".join(chunk)
+                # pull the next chunk of text
+                eos: bool = False
+                response: str = ""
+                while not eos:
+                    chunk: list[str] = []
+                    for i in range(0,100):
+                        token, eos, _ = self.model.generator.stream()
+                        if eos: break
+                        chunk.append(token)
+
+                    # after some tokens are generated, tell client to stream message to user
+                    response += "".join(chunk)
+                    self.response_queue.put(
+                        ResponseUpdate(
+                            generation_request.response_index,
+                            eos,
+                            response
+                        )
+                    )
+                print(response)
+            except Exception as error:
                 self.response_queue.put(
                     ResponseUpdate(
                         generation_request.response_index,
-                        eos,
-                        response
+                        message_is_completed=True,
+                        error=error
                     )
-                )
-            print(response)
+                )        
 
 def run_server_for_test(request_queue, response_queue):
     # Synchronous wrapper to run the async function
