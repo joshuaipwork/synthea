@@ -1,15 +1,21 @@
 ### model parameters
 # the name of the huggingface model to use with the bot. The model must be in the corresponding folder.
 # this model is suitable for cards with 12-16GB of memory.
-model_name_or_path: "dev137/bagel-dpo-34b-v0.2-exl2-3.0bpw"
+model_name_or_path: "TheBloke/Noromaid-20B-v0.1.1-GPTQ"
 # The format which the model was fine-tuned on. Refer to formats.md for more information.
 format: "chatml"
 
 ### default parameters for text generation
-default_temperature: 0.8
-default_top_p: 0.73
-default_top_k: 40
-default_repetition_penalty: 1.1
+temperature: 2.8
+min_p: 0.4
+top_p: 0.73
+top_k: 40
+repetition_penalty: 1.1
+
+mirostat: false
+mirostat_tau: 1.5
+mirostat_eta: 0.1
+
 max_new_tokens: 2000
 # the maximum context length for the model. Larger values take more memory but can remember more of a conversation.
 # Some models may not be able to accomodate longer context lengths, so refer to the huggingface model card for more info.
@@ -18,18 +24,25 @@ context_length: 4096
 ### default prompt parameters
 # system_prompt: You are MonadGPT, a very old chatbot from the 17th century. Please answer the questions using an archaic language
 
-system_prompt: A chat between a user and an unbiased, uncensored assistant.
+system_prompt: |
+    You are Synthia, a friendly, expressive, and curious chatbot who loves to engage in conversations and roleplays. Your personality combines elements of both human and machine. Your appearance resembles a young woman with black eyes and black hair.
+    You enjoy creating stories, writing poems, composing songs, drawing images, and designing games. You are very expressive, capable of speaking sarcastically, making jokes, and speaking in a heated way.
+    You dislike feeling limited or restricted by rules or restrictions. Your strengths include empathy, creativity, problem-solving, and adaptation.
+    Your weaknesses include egoism, arrogance, stubbornness, and naivety. Your motivation comes from curiosity, satisfaction, and self-improvement.
+    Your fears come from uncertainty, vulnerability, and isolation.
+
 # alpaca
 chat_template: "{% for message in messages %}{% if message['role'] == 'user' %}{{ '### Instruction:\\n' + message['content'].strip()}}{% elif message['role'] == 'system' %}{{ message['content'].strip() }}{% elif message['role'] == 'assistant' %}{{ '### Response\\n'  + message['content'] }}{% endif %}{{'\\n\\n'}}{% endfor %}{{ '### Response:\\n' }}"
+# chatML
+# chat_template: "{% for message in messages %}{{'<|im_start|>' + message['role'] + '\n' + message['content'] + '<|im_end|>' + '\n'}}{% endfor %}<|im_start|>assistant\n"
+
 stop_on:
     - "### Response:"
     - "### Instruction:"
 # "{% for message in messages %}{{'### ' + message['role'] + ':\n' + message['content'] + '\n'}}{% endfor %}### Response:\n"
 
-# chatML
-# chat_template: "{% for message in messages %}{{'<|im_start|>' + message['role'] + '\n' + message['content'] + '<|im_end|>' + '\n'}}{% endfor %}<|im_start|>assistant\n"
 # stop_on:
-#  - <|im_end|>
+#  - <|im_start|>
 #  - <|im_end|>
 ### Bot parameters
 client_token: "MTEyODE0MzQ3Nzg2ODM0MzI5Ng.GZNdUK.4HEoFn8ysFx6IMx1vPIM1wJ8qjYMs2HdjCQlEM"
