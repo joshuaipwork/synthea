@@ -14,7 +14,7 @@ class ExLlamaV2Model:
         """
         yaml = YAML()
         with open("config.yaml", "r", encoding="utf-8") as file:
-            new_config = yaml.load(file)        
+            new_config = yaml.load(file)
 
         # import basic settings from huggingface repo
         self.config = ExLlamaV2Config()
@@ -29,12 +29,6 @@ class ExLlamaV2Model:
         else:
             print("No config.yaml context length found. Defaulting to context length of " + self.config.max_seq_len)
 
-        if "context_length" in new_config:
-            print(f"Set context length to {new_config['context_length']}")
-            self.config. = new_config["context_length"]
-        else:
-            print("No config.yaml context length found. Defaulting to context length of " + self.config.max_seq_len)
-
         self.model = ExLlamaV2(self.config)
         self.cache = ExLlamaV2Cache(self.model, lazy = True)
 
@@ -43,8 +37,11 @@ class ExLlamaV2Model:
 
         self.tokenizer = ExLlamaV2Tokenizer(self.config)
         self.generator = ExLlamaV2StreamingGenerator(self.model, self.cache, self.tokenizer)
-        self.generator.set_stop_conditions([self.tokenizer.eos_token_id])
-        self.gen_settings = ExLlamaV2Sampler.Settings()
+
+        stop_on = new_config["stop_on"]
+        stop_on.append(self.tokenizer.eos_token_id)
+        self.generator.set_stop_conditions(stop_on)
+        print("Model loaded!")
 
 
     def begin_stream(self, context: str) -> None:
@@ -54,10 +51,24 @@ class ExLlamaV2Model:
         Args:
             context (str): The full context for the model to conduct inference on.
         """
+        yaml = YAML()
+        with open("config.yaml", "r", encoding="utf-8") as file:
+            new_config = yaml.load(file)
 
-        instruction_ids = self.tokenizer.encode(context, add_bos = True)
-        context_ids = instruction_ids if self.generator.sequence_ids is None \
-            else torch.cat([self.generator.sequence_ids, instruction_ids], dim = -1)
+        self.gen_settings = ExLlamaV2Sampler.Settings()
+
+        self.gen_settings.mirostat = new_config["mirostat"] if "mirostat" in new_config else False
+        self.gen_settings.mirostat_eta = new_config["mirostat_eta"] if "mirostat_eta" in new_config else 1.5
+        self.gen_settings.mirostat_tau = new_config["mirostat_tau"] if "mirostat_tau" in new_config else 0.1
+
+        self.gen_settings.top_k = new_config["top_k"] if "top_k" in new_config else 50
+        self.gen_settings.top_p = new_config["top_p"] if "top_p" in new_config else 0.8
+        self.gen_settings.min_p = new_config["min_p"] if "min_p" in new_config else 0
+
+        self.gen_settings.temperature = new_config["temperature"] if "temperature" in new_config else 2.0
+        self.gen_settings.token_repetition_penalty = new_config["repetition_penalty"] if "repetition_penalty" in new_config else 1.15
+
+        context_ids = self.tokenizer.encode(context, add_bos = True)
         self.generator.begin_stream(context_ids, self.gen_settings)
 
         return self.generator
