@@ -147,6 +147,16 @@ class SyntheaClient(discord.Client):
         [🗑️] will tell the bot to delete its own post
         [▶️] will tell the bot to stop generating
         """
+        async def delete_response():
+            self.in_progress_responses.discard(response_id)
+            # delete all messages in the chain, starting with the last
+            for message in reversed(response_chain[1:]):
+                await message.delete()
+            del self.response_message_chains[response_id]
+            del self.message_id_to_response_index[reaction.message.id]
+            await reaction.message.remove_reaction("📝", self.user)
+            await reaction.message.remove_reaction("⏳", self.user)
+
         # TODO: make the bot add reactions as buttons on its own post
         # TODO: Figure out how to distinguish webhooks made by me from webhooks made by someone else
         # TODO: Don't delete messages if the webhook was made by someone else.
@@ -159,25 +169,24 @@ class SyntheaClient(discord.Client):
             response_chain: list[discord.Message] = self.response_message_chains[response_id]
 
             if reaction.emoji == "🗑️":
-                self.in_progress_responses.discard(response_id)
-                # delete all messages in the chain, starting with the last
-                for message in reversed(response_chain[1:]):
-                    await message.delete()
-                del self.response_message_chains[response_id]
-                del self.message_id_to_response_index[reaction.message.id]
-                await reaction.message.remove_reaction("📝", self.user)
-                await reaction.message.remove_reaction("⏳", self.user)
+                await delete_response()
                 await reaction.message.add_reaction("⚠️")
             if reaction.emoji == "🛑":
                 self.in_progress_responses.discard(response_id)
                 await reaction.message.remove_reaction("📝", self.user)
                 await reaction.message.remove_reaction("⏳", self.user)
                 await reaction.message.add_reaction("⚠️")
-            # if reaction.emoji == "🔁":
-            #     # TODO: regenerate the response.
-            #     await reaction.message.delete()
-            #     for message in reversed(response_chain[:1]):
-            #         await message.delete()
+
+            # regenerate the response
+            if reaction.emoji == "🔁":
+                # TODO: regenerate the response.
+                await delete_response()
+                await reaction.message.remove_reaction("⚠️", self.user)
+                await reaction.message.remove_reaction("✅", self.user)
+                await reaction.message.add_reaction("⏳")
+
+                # create a new response
+                await self.respond_to_user(reaction.message)
 
     async def on_message(self, message: discord.Message):
         """
@@ -221,6 +230,7 @@ class SyntheaClient(discord.Client):
         try:
             await message.add_reaction("🛑")
             await message.add_reaction("🗑️")
+            await message.add_reaction("🔁")
             await message.add_reaction("⏳")
             await self.respond_to_user(message)
 
