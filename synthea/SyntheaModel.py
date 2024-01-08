@@ -1,11 +1,9 @@
 from torch import Tensor
 from ruamel.yaml import YAML
 from typing import Optional
-import torch
-from transformers import AutoTokenizer, logging
-import os, glob
+from transformers import AutoTokenizer
 from transformers import StoppingCriteria
-from transformers import AutoModelForCausalLM, AutoTokenizer, pipeline, Pipeline, PreTrainedTokenizer, PreTrainedModel, BitsAndBytesConfig
+from transformers import AutoModelForCausalLM, AutoTokenizer, Pipeline, PreTrainedTokenizer, PreTrainedModel
 
 class StopOnTokens(StoppingCriteria):
     """

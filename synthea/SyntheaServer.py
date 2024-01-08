@@ -1,11 +1,10 @@
 
 
 import asyncio
-import torch.multiprocessing as multiprocessing
-import sys
 
 import torch
-from synthea import SyntheaModel
+import torch.multiprocessing as multiprocessing
+
 from synthea.ExllamaV2Model import ExLlamaV2Model
 from synthea.dtos.GenerationRequest import GenerationRequest
 from synthea.dtos.ResponseUpdate import ResponseUpdate
@@ -36,7 +35,7 @@ class SyntheaServer:
                 response: str = ""
                 while not eos:
                     chunk: list[str] = []
-                    for i in range(0,100):
+                    for i in range(0,200):
                         token, eos, _ = self.model.generator.stream()
                         if eos: break
                         chunk.append(token)

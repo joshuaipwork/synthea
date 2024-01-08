@@ -3,27 +3,20 @@ The starting point for the program
 """
 
 import multiprocessing
-import traceback
-from typing import Optional
 import discord
 from discord import app_commands
 import torch
 import yaml
 import asyncio
-import janus
 
-from synthea.CharactersDatabase import CharactersDatabase
 from synthea.SyntheaClient import SyntheaClient
 from synthea.SyntheaServer import SyntheaServer
-from synthea.SyntheaModel import SyntheaModel
-from synthea.CommandParser import ChatbotParser
-from synthea.ContextManager import ContextManager
-from synthea.dtos.GenerationRequest import GenerationRequest
 from synthea.dtos.ResponseUpdate import ResponseUpdate
-from synthea.modals import CharCreationView, UpdateCharModal, CharCreationStep
+from synthea.modals.CharCreationView import CharCreationView
+from synthea.modals.UpdateCharModal import UpdateCharModal
+from synthea.modals.CharCreationStep import CharCreationStep
 from synthea.character_errors import (
     CharacterNotFoundError,
-    CharacterNotOnServerError,
     ForbiddenCharacterError,
 )
 
