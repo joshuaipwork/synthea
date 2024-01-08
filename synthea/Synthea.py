@@ -200,8 +200,8 @@ if __name__ == "__main__":
             await interaction.response.send_message(
                 "There are no public characters on this server.", ephemeral=True
             )
-
-        await interaction.response.send_message(format_list(char_list), ephemeral=True)
+        else:
+            await interaction.response.send_message(format_list(char_list), ephemeral=True)
 
 
     @tree.command(
@@ -215,8 +215,8 @@ if __name__ == "__main__":
             await interaction.response.send_message(
                 "You don't own any characters.", ephemeral=True
             )
-
-        await interaction.response.send_message(format_list(char_list), ephemeral=True)
+        else:
+            await interaction.response.send_message(format_list(char_list), ephemeral=True)
 
 
     with open("config.yaml", encoding="utf-8") as config_file:
