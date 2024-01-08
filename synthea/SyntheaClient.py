@@ -2,28 +2,22 @@
 The discord client which contains the bulk of the logic for the chatbot.
 """
 import multiprocessing
-import time
 import traceback
 from typing import Optional
 import discord
 from discord import app_commands
 import yaml
 import asyncio
-import janus
 from synthea import SyntheaUtilities
 
 from synthea.CharactersDatabase import CharactersDatabase
 
-from synthea.SyntheaModel import SyntheaModel
 from synthea.CommandParser import ChatbotParser
 from synthea.ContextManager import ContextManager
 from synthea.dtos.GenerationRequest import GenerationRequest
 from synthea.dtos.ResponseUpdate import ResponseUpdate
-from synthea.modals import CharCreationView, UpdateCharModal, CharCreationStep
 from synthea.character_errors import (
     CharacterNotFoundError,
-    CharacterNotOnServerError,
-    ForbiddenCharacterError,
 )
 
 COMMAND_START_STR: str = "!syn "
