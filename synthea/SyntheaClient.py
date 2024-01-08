@@ -89,17 +89,49 @@ class SyntheaClient(discord.Client):
 
     async def stream_responses(self) -> None:
         while True:
-            message_update: ResponseUpdate = await asyncio.to_thread(self.response_queue.get)  # Wait for a message
+            try:
+                message_update: ResponseUpdate = await asyncio.to_thread(self.response_queue.get)  # Wait for a message
 
-            # if the response was aborted by user or previously errored, no need to update anything
-            if message_update.response_index not in self.in_progress_responses:
-                continue
+                # if the response was aborted by user or previously errored, no need to update anything
+                if message_update.response_index not in self.in_progress_responses:
+                    continue
 
-            split_text: list[str] = SyntheaUtilities.split_text(message_update.new_message)
-            message_chain: list[discord.Message] = self.response_message_chains[message_update.response_index]
+                split_text: list[str] = SyntheaUtilities.split_text(message_update.new_message)
+                message_chain: list[discord.Message] = self.response_message_chains[message_update.response_index]
 
-            # if generation encounters an error, let the user know and cancel further generations
-            if message_update.error is not None:
+                # if generation encounters an error, let the user know and cancel further generations
+                if message_update.error:
+                    raise message_update.error
+
+                # if no text was generated, send a default message instead of not sending anything.
+                if len(split_text) == 0:
+                    split_text.append("...")
+
+                # if this is the first message we've sent to the user, create a new message and let the user know we're working on it
+                if len(message_chain) == 1:
+                    await message_chain[0].remove_reaction("⏳", self.user)
+                    await message_chain[0].add_reaction("📝")
+                    await message_chain[0].add_reaction("🗑️")
+                    message_chain.append(await message_chain[0].reply(split_text[-1]))
+
+                # if we've overflown the length of the most recent message, create a new message
+                elif len(message_chain) < len(split_text) + 1:
+                    await message_chain[-1].edit(content=split_text[-2])
+                    message_chain.append(await message_chain[-1].reply(split_text[-1]))
+
+                # otherwise, update the most recent message with the new text
+                else:
+                    await message_chain[-1].edit(content=split_text[-1])
+
+                if message_update.message_is_completed:
+                    # update the original message from the user with a completed emoji
+                    await message_chain[0].remove_reaction("📝", self.user)
+                    await message_chain[0].add_reaction("✅")
+
+                    # since message is completed, no need to continue responding to it
+                    self.in_progress_responses.discard(message_update.response_index)
+
+            except Exception as e:
                 await message_chain[0].remove_reaction("⏳", self.user)
                 await message_chain[0].remove_reaction("📝", self.user)
                 await message_chain[0].add_reaction("❌")
@@ -107,32 +139,6 @@ class SyntheaClient(discord.Client):
                 traceback.print_exc(limit=4)
                 self.in_progress_responses.discard(message_update.response_index)
                 continue
-
-            # if this is the first message we've sent to the user, create a new message and let the user know we're working on it
-            if len(message_chain) == 1:
-                await message_chain[0].remove_reaction("⏳", self.user)
-                await message_chain[0].add_reaction("📝")
-                await message_chain[0].add_reaction("🗑️")
-                message_chain.append(await message_chain[0].reply(split_text[-1]))
-
-            # if we've overflown the length of the most recent message, create a new message
-            elif len(message_chain) < len(split_text) + 1:
-                await message_chain[-1].edit(content=split_text[-2])
-                message_chain.append(await message_chain[-1].reply(split_text[-1]))
-
-            # otherwise, update the most recent message with the new text
-            else:
-                await message_chain[-1].edit(content=split_text[-1])
-
-            if message_update.message_is_completed:
-                # update the original message from the user with a completed emoji
-                try:
-                    await message_chain[0].remove_reaction("📝", self.user)
-                    await message_chain[0].add_reaction("✅")
-                except Exception as e:
-                    continue
-                # since message is completed, no need to continue responding to it
-                self.in_progress_responses.discard(message_update.response_index)
 
     async def on_reaction_add(self, reaction: discord.Reaction, _user):
         """
