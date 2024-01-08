@@ -47,7 +47,13 @@ class SyntheaClient(discord.Client):
     # a message chain corresponding to a response to the user. The first element in the list
     # is the original message from the user, and following elements are the response to the
     # user, possibly spanning multiple messages.
-    in_progress_responses: dict[int, list[discord.Message]] = {}
+    response_message_chains: dict[int, list[discord.Message]] = {}
+
+    in_progress_responses: set[int] = set()
+
+    # a map of user messages to the response index the message corresponds to.
+    # used for stopping generations prematurely.
+    message_id_to_response_index: dict[int, int] = {}
 
     def __init__(self, intents, request_queue: multiprocessing.Queue, response_queue: multiprocessing.Queue):
         super().__init__(intents=intents)
@@ -85,12 +91,12 @@ class SyntheaClient(discord.Client):
         while True:
             message_update: ResponseUpdate = await asyncio.to_thread(self.response_queue.get)  # Wait for a message
 
-            # if the response was aborted by user, no need to update anything
-            if (message_update.response_index not in self.in_progress_responses):
+            # if the response was aborted by user or previously errored, no need to update anything
+            if message_update.response_index not in self.in_progress_responses:
                 continue
 
             split_text: list[str] = SyntheaUtilities.split_text(message_update.new_message)
-            message_chain: list[discord.Message] = self.in_progress_responses[message_update.response_index]
+            message_chain: list[discord.Message] = self.response_message_chains[message_update.response_index]
 
             # if generation encounters an error, let the user know and cancel further generations
             if message_update.error is not None:
@@ -99,18 +105,19 @@ class SyntheaClient(discord.Client):
                 await message_chain[0].add_reaction("❌")
                 await message_chain[0].reply(message_update.error, mention_author=True)
                 traceback.print_exc(limit=4)
-                del self.in_progress_responses[message_update.response_index]
+                self.in_progress_responses.discard(message_update.response_index)
                 continue
 
             # if this is the first message we've sent to the user, create a new message and let the user know we're working on it
             if len(message_chain) == 1:
                 await message_chain[0].remove_reaction("⏳", self.user)
                 await message_chain[0].add_reaction("📝")
+                await message_chain[0].add_reaction("🗑️")
                 message_chain.append(await message_chain[0].reply(split_text[-1]))
 
             # if we've overflown the length of the most recent message, create a new message
-            if len(message_chain) < len(split_text) + 1:
-                # TODO: update the n-1th message when the splitting logic becomes better
+            elif len(message_chain) < len(split_text) + 1:
+                await message_chain[-1].edit(content=split_text[-2])
                 message_chain.append(await message_chain[-1].reply(split_text[-1]))
 
             # otherwise, update the most recent message with the new text
@@ -125,15 +132,14 @@ class SyntheaClient(discord.Client):
                 except Exception as e:
                     continue
                 # since message is completed, no need to continue responding to it
-                del self.in_progress_responses[message_update.response_index]
-
+                self.in_progress_responses.discard(message_update.response_index)
 
     async def on_reaction_add(self, reaction: discord.Reaction, _user):
         """
         Enables the bot to take a variety of actions when its posts are reacted to
 
         [🗑️] will tell the bot to delete its own post
-        [▶️] will tell the bot to continue from this post
+        [▶️] will tell the bot to stop generating
         """
         # TODO: make the bot add reactions as buttons on its own post
         # TODO: Figure out how to distinguish webhooks made by me from webhooks made by someone else
@@ -141,9 +147,31 @@ class SyntheaClient(discord.Client):
         if reaction.message.author.id == self.user.id:
             if reaction.emoji == "🗑️":
                 await reaction.message.delete()
-            if reaction.emoji == "🔁":
-                # regenerate the response.
-                await reaction.message.delete()
+
+        if reaction.message.id in self.message_id_to_response_index:
+            response_id: int = self.message_id_to_response_index[reaction.message.id]
+            response_chain: list[discord.Message] = self.response_message_chains[response_id]
+
+            if reaction.emoji == "🗑️":
+                self.in_progress_responses.discard(response_id)
+                # delete all messages in the chain, starting with the last
+                for message in reversed(response_chain[1:]):
+                    await message.delete()
+                del self.response_message_chains[response_id]
+                del self.message_id_to_response_index[reaction.message.id]
+                await reaction.message.remove_reaction("📝", self.user)
+                await reaction.message.remove_reaction("⏳", self.user)
+                await reaction.message.add_reaction("⚠️")
+            if reaction.emoji == "🛑":
+                self.in_progress_responses.discard(response_id)
+                await reaction.message.remove_reaction("📝", self.user)
+                await reaction.message.remove_reaction("⏳", self.user)
+                await reaction.message.add_reaction("⚠️")
+            # if reaction.emoji == "🔁":
+            #     # TODO: regenerate the response.
+            #     await reaction.message.delete()
+            #     for message in reversed(response_chain[:1]):
+            #         await message.delete()
 
     async def on_message(self, message: discord.Message):
         """
@@ -185,6 +213,8 @@ class SyntheaClient(discord.Client):
 
         # the message was meant for the bot and we must respond
         try:
+            await message.add_reaction("🛑")
+            await message.add_reaction("🗑️")
             await message.add_reaction("⏳")
             await self.respond_to_user(message)
 
@@ -250,7 +280,9 @@ class SyntheaClient(discord.Client):
         it will take up the prompt and generate a response.
         """
         # compile the prompt from the chat history
-        self.in_progress_responses[self.response_index] = [message_from_user]
+        self.response_message_chains[self.response_index] = [message_from_user]
+        self.in_progress_responses.add(self.response_index)
+        self.message_id_to_response_index[message_from_user.id] = self.response_index
 
         self.request_queue.put(
             GenerationRequest(
