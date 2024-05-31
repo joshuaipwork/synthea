@@ -37,6 +37,12 @@ class CharCreationView(ui.View):
                 ),
             ),
             (
+                CharCreationStep.EXAMPLE_MESSAGES,
+                lambda interaction, new_val: self.enter_value(
+                    interaction, new_val, CharCreationStep.EXAMPLE_MESSAGES
+                ),
+            ),
+            (
                 CharCreationStep.AVATAR,
                 lambda interaction, new_val: self.enter_value(
                     interaction, new_val, CharCreationStep.AVATAR
@@ -188,6 +194,7 @@ class CharCreationView(ui.View):
                 placeholder=text_data["modal_placeholder"],
                 max_length=max_length,
                 style=style,
+                required=text_data["required"]
             )
             self.add_item(self.value_input)
 

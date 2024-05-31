@@ -5,12 +5,10 @@ The starting point for the program
 import multiprocessing
 import discord
 from discord import app_commands
-import torch
 import yaml
 import asyncio
 
 from synthea.SyntheaClient import SyntheaClient
-from synthea.SyntheaServer import SyntheaServer
 from synthea.dtos.ResponseUpdate import ResponseUpdate
 from synthea.modals.CharCreationView import CharCreationView
 from synthea.modals.UpdateCharModal import UpdateCharModal
@@ -33,34 +31,7 @@ def format_list(char_list: list[dict[str, str]]) -> str:
     return output
 
 
-def run_server_for_test(request_queue, response_queue):
-    # Synchronous wrapper to run the async function
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-
-    server: SyntheaServer = SyntheaServer(request_queue, response_queue)
-    loop.run_until_complete(server.run())
-    loop.close()
-
-async def test_client(request_queue, response_queue):
-    while True:
-        response_update: ResponseUpdate = await asyncio.to_thread(response_queue.get)
-        print(response_update.new_message)
-        if response_update.message_is_completed: print("Message completed.")
-
-def run_client_for_test(request_queue, response_queue):
-    # Synchronous wrapper to run the async function
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-
-    loop.run_until_complete(test_client(request_queue, response_queue))
-    loop.close()
-
 if __name__ == "__main__":
-    multiprocessing.set_start_method("spawn")
-    request_queue: multiprocessing.Queue = multiprocessing.Queue()
-    response_queue: multiprocessing.Queue = multiprocessing.Queue()
-
     with open("config.yaml", "r", encoding="utf-8") as file:
         token = yaml.safe_load(file)["client_token"]
 
@@ -69,7 +40,7 @@ if __name__ == "__main__":
     intents.message_content = True
     intents.presences = True
     intents.members = True
-    client = SyntheaClient(intents=intents, request_queue=request_queue, response_queue=response_queue)
+    client = SyntheaClient(intents=intents)
 
     # set up slash commands. It's pretty gross having this here along with the client,
     # but it doesn't seem like there's a better way to do it
@@ -211,21 +182,4 @@ if __name__ == "__main__":
         else:
             await interaction.response.send_message(format_list(char_list), ephemeral=True)
 
-
-    with open("config.yaml", encoding="utf-8") as config_file:
-        config = yaml.safe_load(config_file)
-
-    try:
-        server_process = multiprocessing.Process(target=run_server_for_test, args=(request_queue, response_queue))
-        server_process.start()
-
-
-        client.run(config["client_token"])
-
-        # responder_process = multiprocessing.Process(target=run_client_for_test, args=(request_queue, response_queue))
-        # responder_process.start()
-
-    finally:
-        server_process.terminate()
-        # client_process.terminate()
-        torch.cuda.empty_cache()
+    client.run(token)

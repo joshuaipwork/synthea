@@ -14,3 +14,4 @@ class CharCreationStep(Enum):
     AVATAR = "avatar_link"
     DESCRIPTION = "description"
     OUTRO = "outro"
+    EXAMPLE_MESSAGES = "example_messages"

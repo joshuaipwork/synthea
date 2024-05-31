@@ -94,7 +94,7 @@ class ContextManager:
         self.context_length: int = self.config["context_length"]
         self.bot_user_id: int = bot_user_id
 
-    async def generate_prompt_from_chat(
+    async def generate_chat_history_from_chat(
         self, message: discord.Message, system_prompt: Optional[str] = None
     ) -> str:
         """
@@ -112,16 +112,8 @@ class ContextManager:
             system_prompt=system_prompt,
         )
 
-        # load chat template from config
-        if ("chat_template" in self.config):
-            chat_template = self.config["chat_template"]
-        else:
-            print("Unable to find chat template in config, using ChatML.")
-            chat_template = "{% for message in messages %}{{'<|im_start|>' + message['role'] + '\n' + message['content'] + '<|im_end|>' + '\n'}}{% endfor %}<|im_start|>assistant\n"
+        return chat_history
 
-        prompt: str = await self.convert_chat_history_to_prompt(chat_history, chat_template)
-
-        return prompt
 
     async def convert_chat_history_to_prompt(self, chat_history: list[dict[str, str]], chat_template: str) -> str:
         """
@@ -162,13 +154,12 @@ class ContextManager:
         token_count: int = 0
 
         # use provided system prompt
-        if not system_prompt:
-            system_prompt = self.config["system_prompt"]
+        messages = []
+        if system_prompt:
+            messages.append({"role": "system", "content": system_prompt})
 
-        messages = [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": self._get_text(message)[0]}
-        ]
+        # append first message
+        messages.append({"role": "user", "content": self._get_text(message)[0]})
 
         # retrieve as many tokens as can fit into the context length from history
         history_token_limit: int = self.context_length - self.config["max_new_tokens"]
