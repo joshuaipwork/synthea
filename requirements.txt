@@ -5,13 +5,5 @@ torchvision
 torchaudio
 transformers>=4.31.0
 # llama-cpp-python is also installed, but because of special arguments it is installed within install.sh instead.
-langchain
 pytest==7.4.0
 pytest-dependency==0.5.1
-scipy
-optimum
-auto-gptq
-accelerate
-awq
-bitsandbytes
-exllamav2
