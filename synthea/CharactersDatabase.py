@@ -6,7 +6,7 @@ from .character_errors import *
 conn = sqlite3.connect("mydata.db")
 
 char_id_PATTERN = r"^\w+$"  # The regex pattern for valid strings
-EDITABLE_COLUMNS = ["description", "display_name", "avatar_link", "system_prompt"]
+EDITABLE_COLUMNS = ["description", "display_name", "avatar_link", "system_prompt", "example_messages"]
 
 
 class CharactersDatabase:
@@ -49,6 +49,7 @@ class CharactersDatabase:
                 display_name TEXT,
                 system_prompt TEXT,
                 avatar_link TEXT,
+                example_messages TEXT,
                 model TEXT
             );
             """

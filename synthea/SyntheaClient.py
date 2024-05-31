@@ -1,11 +1,14 @@
 """
 The discord client which contains the bulk of the logic for the chatbot.
 """
+import math
 import multiprocessing
+import random
 import traceback
 from typing import Optional
 import discord
 from discord import app_commands
+import openai
 import yaml
 import asyncio
 from synthea import SyntheaUtilities
@@ -18,6 +21,7 @@ from synthea.dtos.GenerationRequest import GenerationRequest
 from synthea.dtos.ResponseUpdate import ResponseUpdate
 from synthea.character_errors import (
     CharacterNotFoundError,
+    CharacterNotOnServerError,
 )
 
 COMMAND_START_STR: str = "!syn "
@@ -49,14 +53,17 @@ class SyntheaClient(discord.Client):
     # used for stopping generations prematurely.
     message_id_to_response_index: dict[int, int] = {}
 
-    def __init__(self, intents, request_queue: multiprocessing.Queue, response_queue: multiprocessing.Queue):
-        super().__init__(intents=intents)
-        # a queue to send user prompts to SyntheaServer
-        self.request_queue: multiprocessing.Queue = request_queue
-        # a queue to receive streamed inferences from SyntheaServer
-        self.response_queue: multiprocessing.Queue = response_queue
+    def __init__(self, intents):
+        with open("config.yaml", "r", encoding="utf-8") as file:
+            self.config = yaml.safe_load(file)
 
+        super().__init__(intents=intents)
+        self.openai: openai.AsyncOpenAI = openai.AsyncOpenAI(
+            api_key=self.config["api_key"],
+            base_url=self.config["api_base_url"]
+        )
         self.char_db = CharactersDatabase()
+
 
     # async def setup_hook(self):
     #     """
@@ -77,110 +84,42 @@ class SyntheaClient(discord.Client):
             self.synced = True
             print("Synced command tree")
 
-        await self.stream_responses()
-
         print(f"Logged on as {self.user}!")
 
-    async def stream_responses(self) -> None:
-        while True:
-            try:
-                message_update: ResponseUpdate = await asyncio.to_thread(self.response_queue.get)  # Wait for a message
-
-                # if the response was aborted by user or previously errored, no need to update anything
-                if message_update.response_index not in self.in_progress_responses:
-                    continue
-
-                split_text: list[str] = SyntheaUtilities.split_text(message_update.new_message)
-                message_chain: list[discord.Message] = self.response_message_chains[message_update.response_index]
-
-                # if generation encounters an error, let the user know and cancel further generations
-                if message_update.error:
-                    raise message_update.error
-
-                # if no text was generated, send a default message instead of not sending anything.
-                if len(split_text) == 0:
-                    split_text.append("...")
-
-                # if this is the first message we've sent to the user, create a new message and let the user know we're working on it
-                if len(message_chain) == 1:
-                    await message_chain[0].remove_reaction("⏳", self.user)
-                    await message_chain[0].add_reaction("📝")
-                    await message_chain[0].add_reaction("🗑️")
-                    message_chain.append(await message_chain[0].reply(split_text[-1]))
-
-                # if we've overflown the length of the most recent message, create a new message
-                elif len(message_chain) < len(split_text) + 1:
-                    await message_chain[-1].edit(content=split_text[-2])
-                    message_chain.append(await message_chain[-1].reply(split_text[-1]))
-
-                # otherwise, update the most recent message with the new text
-                else:
-                    await message_chain[-1].edit(content=split_text[-1])
-
-                if message_update.message_is_completed:
-                    # update the original message from the user with a completed emoji
-                    await message_chain[0].remove_reaction("📝", self.user)
-                    await message_chain[0].add_reaction("✅")
-
-                    # since message is completed, no need to continue responding to it
-                    self.in_progress_responses.discard(message_update.response_index)
-
-            except Exception as e:
-                await message_chain[0].remove_reaction("⏳", self.user)
-                await message_chain[0].remove_reaction("📝", self.user)
-                await message_chain[0].add_reaction("❌")
-                await message_chain[0].reply(message_update.error, mention_author=True)
-                traceback.print_exc(limit=4)
-                self.in_progress_responses.discard(message_update.response_index)
-                continue
-
-    async def on_reaction_add(self, reaction: discord.Reaction, _user):
+    async def on_reaction_add(self, reaction: discord.Reaction, user):
         """
         Enables the bot to take a variety of actions when its posts are reacted to
 
         [🗑️] will tell the bot to delete its own post
         [▶️] will tell the bot to stop generating
         """
-        async def delete_response():
-            self.in_progress_responses.discard(response_id)
-            # delete all messages in the chain, starting with the last
-            for message in reversed(response_chain[1:]):
-                await message.delete()
-            del self.response_message_chains[response_id]
-            del self.message_id_to_response_index[reaction.message.id]
-            await reaction.message.remove_reaction("📝", self.user)
-            await reaction.message.remove_reaction("⏳", self.user)
-
         # TODO: make the bot add reactions as buttons on its own post
         # TODO: Figure out how to distinguish webhooks made by me from webhooks made by someone else
         # TODO: Don't delete messages if the webhook was made by someone else.
-        if reaction.message.author.id == self.user.id:
+        if user != self.user and reaction.message.author.id == self.user.id:
+            responded_message = reaction.message
             if reaction.emoji == "🗑️":
                 await reaction.message.delete()
-
-        if reaction.message.id in self.message_id_to_response_index:
-            response_id: int = self.message_id_to_response_index[reaction.message.id]
-            response_chain: list[discord.Message] = self.response_message_chains[response_id]
-
-            if reaction.emoji == "🗑️":
-                await delete_response()
-                await reaction.message.add_reaction("⚠️")
-            if reaction.emoji == "🛑":
-                self.in_progress_responses.discard(response_id)
-                await reaction.message.remove_reaction("📝", self.user)
-                await reaction.message.remove_reaction("⏳", self.user)
-                await reaction.message.add_reaction("⚠️")
+            # if reaction.emoji == "🛑":
+            #     self.in_progress_responses.discard(response_id)
+            #     await reaction.message.remove_reaction("📝", self.user)
+            #     await reaction.message.remove_reaction("⏳", self.user)
+            #     await reaction.message.add_reaction("⚠️")
 
             # regenerate the response
             if reaction.emoji == "🔁":
+                user_message = await reaction.message.channel.fetch_message(reaction.message.reference.message_id)
+                
                 # TODO: regenerate the response.
-                await delete_response()
-                await reaction.message.remove_reaction("⚠️", self.user)
-                await reaction.message.remove_reaction("✅", self.user)
-                await reaction.message.add_reaction("⏳")
+                await reaction.message.delete()
+                await user_message.remove_reaction("❌", self.user)
+                await user_message.remove_reaction("⚠️", self.user)
+                await user_message.remove_reaction("✅", self.user)
+                await user_message.add_reaction("⏳")
 
                 # create a new response
-                await self.respond_to_user(reaction.message)
+                await self.respond_to_user(user_message)
+                await user_message.remove_reaction("⏳", self.user)
 
     async def on_message(self, message: discord.Message):
         """
@@ -222,18 +161,20 @@ class SyntheaClient(discord.Client):
 
         # the message was meant for the bot and we must respond
         try:
-            await message.add_reaction("🛑")
-            await message.add_reaction("🗑️")
-            await message.add_reaction("🔁")
+            # await message.add_reaction("🛑")
             await message.add_reaction("⏳")
             await self.respond_to_user(message)
+            await message.add_reaction("✅")
 
         # if error, let the user know what went wrong
         # pylint: disable-next=broad-exception-caught
         except Exception as err:
             await message.add_reaction("❌")
             traceback.print_exc(limit=4)
-            await message.reply(f"❌ {err}", mention_author=True)
+            err_string = f"{err}"[:1024]
+            await message.reply(f"❌ {err_string}", mention_author=True)
+
+        await message.remove_reaction("⏳", self.user)
 
     async def respond_to_user(self, message_from_user: discord.Message):
         """
@@ -250,8 +191,12 @@ class SyntheaClient(discord.Client):
 
         context_manager = ContextManager(self.user.id)
 
+        model: str = args.model
+
+        if not model:
+            model = self.config['default_model']
+
         char_id: str = args.character
-        prompt: str = args.prompt
 
         # if the user responded to the bot playing a character, respond as that character
         replied_char_id = await self._get_character_replied_to(message_from_user)
@@ -259,55 +204,71 @@ class SyntheaClient(discord.Client):
             char_id = replied_char_id
 
         # send a response as a character
-        # if char_id:
-        #     can_access = self.char_db.can_access_character(
-        #         char_id=char_id,
-        #         user_id=message.author.id,
-        #         server_id=message.guild.id if message.guild else None,
-        #     )
-        #     if not can_access:
-        #         raise CharacterNotOnServerError()
+        if char_id:
+            can_access = self.char_db.can_access_character(
+                char_id=char_id,
+                user_id=message_from_user.author.id,
+                server_id=message_from_user.guild.id if message_from_user.guild else None,
+            )
+            if not can_access:
+                raise CharacterNotOnServerError()
 
-        #     char_data = self.char_db.load_character(char_id)
-        #     prompt = await context_manager.compile_prompt_from_chat(
-        #         message, system_prompt=char_data["system_prompt"]
-        #     )
+            char_data = self.char_db.load_character(char_id)
 
-        #     print(f"Resp for {message.author} with char {char_id}")
-        #     response = await self.queue_for_generation(prompt)
-        #     # await self.send_response_as_character(response, char_data, message)
-        # # send a simple plaintext response without adopting a character
-        # else:
+            system_prompt: str = ""
+            if "system_prompt" in char_data and char_data["system_prompt"]:
+                system_prompt += char_data["system_prompt"]
+            if "example_messages" in char_data and char_data["example_messages"]:
+                system_prompt += "\n\n Here are some examples of how to speak:\n"
+                system_prompt += char_data["example_messages"]
+
+            chat_history = await context_manager.generate_chat_history_from_chat(
+                message_from_user, system_prompt=system_prompt
+            )
+
+            print(f"Resp for {message_from_user.author} with char {char_id}")
+            response = await self.queue_for_generation(model, chat_history)
+            await self.send_response_as_character(response, char_data, message_from_user)
+        # send a simple plaintext response without adopting a character
+        else:
         # generate a response and send it to the user.
-        prompt = await context_manager.generate_prompt_from_chat(message_from_user)
-        print(f"Generating for {message_from_user.author}")
-        await self.queue_for_generation(message_from_user, prompt)
-        # await self.send_response_as_base(response, message)
+            chat_history = await context_manager.generate_chat_history_from_chat(
+                message_from_user, system_prompt=self.config["system_prompt"]
+            )
+            print(f"Generating for {message_from_user.author}")
+            response = await self.queue_for_generation(model, chat_history)
+            await self.send_response_as_base(response, message_from_user)
 
-    async def queue_for_generation(self, message_from_user: discord.Message, prompt: str) -> None:
+    async def queue_for_generation(self, model: str, chat_history: list[dict[str, str]]) -> str:
         """
-        Sends a prompt to the generation queue. When the server is available,
+        Sends a prompt to the server for generation. When the server is available,
         it will take up the prompt and generate a response.
         """
-        # compile the prompt from the chat history
-        self.response_message_chains[self.response_index] = [message_from_user]
-        self.in_progress_responses.add(self.response_index)
-        self.message_id_to_response_index[message_from_user.id] = self.response_index
-
-        self.request_queue.put(
-            GenerationRequest(
-                self.response_index,
-                prompt
-            )
+        print(chat_history)
+        chat_completion = await self.openai.chat.completions.create(
+            messages=chat_history,
+            model=model,
+            max_tokens=self.config["max_new_tokens"],
+            presence_penalty=self.config["presence_penalty"],
+            frequency_penalty=self.config["frequency_penalty"],
+            temperature=self.config["temperature"],
+            seed=-1,
+            top_p=self.config["top_p"]
         )
+        # TODO: Add error handling
 
-        self.response_index += 1
+        return chat_completion.choices[0].message.content
 
     async def send_response_as_base(self, response: str, message: discord.Message):
         """
         Sends a simple response using the base template of the model.
         """
-        await self.send_response(response_text=response, message_to_reply=message)
+        # create an embed to extend the character count
+        embed: discord.Embed = discord.Embed(
+            description=response,
+        )
+
+        await self.send_response(response_text=response, embed=embed, message_to_reply=message)
 
     async def send_response_as_character(
         self, response: str, char_data: dict[str, str], message: discord.Message
@@ -327,6 +288,7 @@ class SyntheaClient(discord.Client):
             if "display_name" in char_data
             else char_data["id"]
         )
+
         embed: discord.Embed = discord.Embed(
             title=char_name,
             description=response,
@@ -375,33 +337,11 @@ class SyntheaClient(discord.Client):
             response_text = "..."
             # raise ValueError("No embed or response text included in the response.")
 
-        # TODO: Respect character limits in embeds.
-        if embed:
-            await message_to_reply.reply(mention_author=True, embed=embed)
-            return
+        bot_message: discord.Message = await message_to_reply.reply(mention_author=True, embed=embed)
 
-
-        # output message with no embeds
-        msg_index = 0
-        last_message = None
-        messages = SyntheaUtilities.split_text(response_text)
-        for message in messages:
-            if message_to_reply:
-                # a message in a channel
-                # only reply to the first message to prevent spamming
-                if msg_index == 0:
-                    last_message = await message_to_reply.reply(
-                        message,
-                        mention_author=True,
-                        embed=embed,
-                    )
-                else:
-                    last_message = await last_message.reply(
-                        message, mention_author=False, embed=embed
-                    )
-            else:
-                raise ValueError("No message found to reply to!")
-            msg_index += 1
+        # add controls
+        await bot_message.add_reaction("🗑️")
+        await bot_message.add_reaction("🔁")
 
     async def _get_character_replied_to(self, message: discord.Message) -> str | None:
         """

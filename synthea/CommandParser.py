@@ -57,6 +57,23 @@ class ChatbotParser:
             help="The character for the bot to assume in its response.",
         )
         self.parser.add_argument(
+            "-m",
+            "-model",
+            "--model",
+            action="store",
+            default=None,
+            help="The model for the bot to use in its response.",
+        )
+        self.parser.add_argument(
+            "-sp",
+            "-system-prompt",
+            "--use-as-system-prompt",
+            action="store_true",
+            default=None,
+            dest="use_as_system_prompt",
+            help="Save the prompt text as the system prompt for the remainder of the reply chain.",
+        )
+        self.parser.add_argument(
             "prompt", nargs=argparse.REMAINDER, help="The prompt to give the bot."
         )
 
