@@ -9,3 +9,4 @@ models/*
 !models/PLACE_MODELS_HERE.md
 Synthea.egg-info/
 **.db
+.vscode/
