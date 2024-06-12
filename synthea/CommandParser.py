@@ -40,6 +40,14 @@ class CommandParser(argparse.ArgumentParser):
         """Overriden to prevent console spam"""
 
 
+class ParsedArgs:
+    def __init__(self, character=None, number=None, model=None, use_as_system_prompt=False, prompt=None):
+        self.character = character
+        self.number = number
+        self.model = model
+        self.use_as_system_prompt = use_as_system_prompt
+        self.prompt = prompt
+
 class ChatbotParser:
     def __init__(self):
         self.parser = CommandParser(
@@ -81,13 +89,13 @@ class ChatbotParser:
         with open("config.yaml", "r", encoding="utf-8") as f:
             self.config = yaml.safe_load(f)
 
-    def parse(self, command: str) -> argparse.Namespace:
+    def parse(self, command: str) -> ParsedArgs:
         """
         Parses a command given by the user.
         """
         # remove the command start string if it was present.
         if command.startswith(self.config["command_start_str"]):
             command = command[len(self.config["command_start_str"]) + 1 :]
-        args = self.parser.parse_args(command.split())
+        args: ParsedArgs = self.parser.parse_args(command.split(), namespace=ParsedArgs())
         args.prompt = " ".join(args.prompt)
         return args
