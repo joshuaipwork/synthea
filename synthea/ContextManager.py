@@ -8,8 +8,9 @@ import discord
 from jinja2 import Environment
 import yaml
 
-from synthea.CommandParser import ChatbotParser, CommandError, ParserExitedException
-
+from synthea.CommandParser import ChatbotParser, CommandError, ParsedArgs, ParserExitedException
+from synthea import SyntheaClient
+from synthea.Config import Config
 
 class ThreadHistoryIterator:
     """
@@ -50,13 +51,18 @@ class ReplyChainIterator:
 
     def __init__(self, starting_message: discord.Message):
         self.message = starting_message
+        self.message_index = 0
 
     def __aiter__(self):
         return self
 
     async def __anext__(self):
+        if self.message_index == 0:
+            self.message_index += 1
+            return self.message            
         # go back message-by-message through the reply chain and add it to the context
         if self.message.reference:
+            self.message_index += 1
             try:
                 self.message = await self.message.channel.fetch_message(
                     self.message.reference.message_id
@@ -87,16 +93,12 @@ class ContextManager:
         bot_user_id (str): The discord user id of the bot. Used to determine if a message came from
             the bot or from a user.
         """
-        # TODO: Split the model config and the general bot config.
-        with open("config.yaml", "r", encoding="utf-8") as file:
-            self.config = yaml.safe_load(file)
-
-        self.context_length: int = self.config["context_length"]
+        self.parser = ChatbotParser()
         self.bot_user_id: int = bot_user_id
 
     async def generate_chat_history_from_chat(
         self, message: discord.Message, system_prompt: Optional[str] = None
-    ) -> str:
+    ) -> tuple[list[dict[str, str]], ParsedArgs]:
         """
         Generates a prompt which includes the context from previous messages in a reply chain.
         Messages outside of the reply chain are ignored.
@@ -106,13 +108,13 @@ class ContextManager:
             system_prompt (str): The system prompt to use when generating the prompt
         """
         history_iterator: ReplyChainIterator = ReplyChainIterator(message)
-        chat_history: list[dict[str, str]] = await self.compile_chat_history(
+        chat_history, args = await self.compile_chat_history(
             message=message,
             history_iterator=history_iterator,
-            system_prompt=system_prompt,
+            default_system_prompt=system_prompt,
         )
 
-        return chat_history
+        return chat_history, args
 
 
     async def convert_chat_history_to_prompt(self, chat_history: list[dict[str, str]], chat_template: str) -> str:
@@ -139,36 +141,57 @@ class ContextManager:
         self,
         message: discord.Message,
         history_iterator: AsyncIterator[discord.Message],
-        system_prompt: Optional[str] = None,
-    ) -> list[dict[str, str]]:
+        default_system_prompt: Optional[str] = None,
+    ) -> tuple[list[dict[str, str]], ParsedArgs]:
         """
         Generates a prompt which includes the context from previous messages from the history.
+        Returns the command which applies to this chat history, which is the last command which
+        was sent in the reply chain.
 
         Args:
             message (discord.Message): The last message to add to the prompt.
             history_iterator (ReplyChainIterator): An iterator that contains the chat history
                 to be included in the prompt.
-            system_prompt (str): The system prompt to use when generating the prompt
+            default_system_prompt (str): The system prompt to use if the system prompt is not   
+                overriden by another command within the chat history
         """
+        config = Config()
+
         # pieces of the prompts are appended to the list then assembled in reverse order into the final prompt
         token_count: int = 0
+        args: ParsedArgs = None
+        system_prompt = None
 
         # use provided system prompt
         messages = []
-        if system_prompt:
-            messages.append({"role": "system", "content": system_prompt})
-
-        # append first message
-        messages.append({"role": "user", "content": self._get_text(message)[0]})
 
         # retrieve as many tokens as can fit into the context length from history
-        history_token_limit: int = self.context_length - self.config["max_new_tokens"]
-        system_prompt_tokens: int = len(system_prompt) // self.EST_CHARS_PER_TOKEN
+        history_token_limit: int = config.context_length - config.max_new_tokens
+        system_prompt_tokens: int = len(default_system_prompt) // self.EST_CHARS_PER_TOKEN
         token_count += system_prompt_tokens
         async for message in history_iterator:
             # some messages in the chain may be commands for the bot
             # if so, parse only the prompt in each command in order to not confuse the bot
-            text, added_tokens = self._get_text(message)
+            if message.clean_content.startswith(SyntheaClient.COMMAND_START_STR):
+                message_args: ParsedArgs = self.parser.parse(message.clean_content)
+                if not args:
+                    args = message_args
+                if not system_prompt and args.use_as_system_prompt:
+                    system_prompt = args.prompt
+                    continue
+            text, added_tokens = self._get_text(message, config)
+
+            # # 
+            if not args and message.author.id == self.bot_user_id:
+                # bot uses embeds to speak as a character
+                full_message: discord.Message = await message.channel.fetch_message(
+                    message.id
+                )
+                # if no embed, it wasn't speaking as a character
+                if full_message.embeds:
+                    embed = full_message.embeds[0]
+                    if embed.footer.text == SyntheaClient.SYSTEM_TAG:
+                        continue
 
             # don't include empty messages so the bot doesn't get confused.
             if not text:
@@ -180,15 +203,18 @@ class ContextManager:
 
             # update the prompt with this message
             if message.author.id == self.bot_user_id:
-                messages.insert(1, {"role": "assistant", "content": text})
+                messages.insert(0, {"role": "assistant", "content": text})
             else:
-                messages.insert(1, {"role": "user", "content": text})
+                messages.insert(0, {"role": "user", "content": text})
             
             token_count += added_tokens
 
-        return messages
+        # add the system prompt
+        messages.insert(0, {"role": "system", "content": system_prompt if system_prompt else default_system_prompt})
 
-    def _get_text(self, message: discord.Message):
+        return messages, args
+
+    def _get_text(self, message: discord.Message, config: Config):
         """
         Gets the text from a message and counts the tokens.
 
@@ -198,7 +224,7 @@ class ContextManager:
         # when the bot plays characters, it stores text in embeds rather than content
         if message.author.id == self.bot_user_id and message.embeds:
             text = message.embeds[0].description
-        elif message.clean_content.startswith(self.config["command_start_str"]):
+        elif message.clean_content.startswith(config.command_start_str):
             try:
                 args = ChatbotParser().parse(message.clean_content)
                 text = args.prompt

@@ -15,7 +15,8 @@ from synthea import SyntheaUtilities
 
 from synthea.CharactersDatabase import CharactersDatabase
 
-from synthea.CommandParser import ChatbotParser
+from synthea.CommandParser import ChatbotParser, ParsedArgs
+from synthea.Config import Config
 from synthea.ContextManager import ContextManager
 from synthea.dtos.GenerationRequest import GenerationRequest
 from synthea.dtos.ResponseUpdate import ResponseUpdate
@@ -26,7 +27,8 @@ from synthea.character_errors import (
 
 COMMAND_START_STR: str = "!syn "
 CHAR_LIMIT: int = 2000  # discord's character limit
-
+FOOTER_PATTERN: str = r"^(.*) \| (\d+)$"
+SYSTEM_TAG = "System"
 
 # This example requires the 'message_content' intent.
 class SyntheaClient(discord.Client):
@@ -183,20 +185,31 @@ class SyntheaClient(discord.Client):
         Args:
             message (str): The message to respond to
         """
+        config: Config = Config()
 
-        # parse the command the user sent
+        ### Deal with the case that the user made a command in this message
         command: str = message_from_user.clean_content
-        parser = ChatbotParser()
-        args = parser.parse(command)
+        parser: ChatbotParser = ChatbotParser()
+        args: ParsedArgs = parser.parse(command)
 
+        # if the user wants to use this as the system prompt going forward, just
+        # give them a checkmark and wait for further prompts
+        if args.use_as_system_prompt:
+            await self.send_response_as_system("Conversation started...", message_from_user)
+            return
+
+        # read the history to find the current applicable command
         context_manager = ContextManager(self.user.id)
+        chat_history, args = await context_manager.generate_chat_history_from_chat(
+            message_from_user, system_prompt=config.system_prompt
+        )
 
-        model: str = args.model
-
-        if not model:
-            model = self.config['default_model']
-
-        char_id: str = args.character
+        char_id: str = None
+        model: str = config.default_model
+        if args:
+            if model:
+                model = args.model
+            char_id = args.character
 
         # if the user responded to the bot playing a character, respond as that character
         replied_char_id = await self._get_character_replied_to(message_from_user)
@@ -204,7 +217,7 @@ class SyntheaClient(discord.Client):
             char_id = replied_char_id
 
         # send a response as a character
-        if char_id:
+        if char_id and char_id != SYSTEM_TAG:
             can_access = self.char_db.can_access_character(
                 char_id=char_id,
                 user_id=message_from_user.author.id,
@@ -222,7 +235,7 @@ class SyntheaClient(discord.Client):
                 system_prompt += "\n\n Here are some examples of how to speak:\n"
                 system_prompt += char_data["example_messages"]
 
-            chat_history = await context_manager.generate_chat_history_from_chat(
+            chat_history, _ = await context_manager.generate_chat_history_from_chat(
                 message_from_user, system_prompt=system_prompt
             )
 
@@ -232,9 +245,9 @@ class SyntheaClient(discord.Client):
         # send a simple plaintext response without adopting a character
         else:
         # generate a response and send it to the user.
-            chat_history = await context_manager.generate_chat_history_from_chat(
-                message_from_user, system_prompt=self.config["system_prompt"]
-            )
+            # chat_history = await context_manager.generate_chat_history_from_chat(
+            #     message_from_user, system_prompt=self.config["system_prompt"]
+            # )
             print(f"Generating for {message_from_user.author}")
             response = await self.queue_for_generation(model, chat_history)
             await self.send_response_as_base(response, message_from_user)
@@ -244,16 +257,17 @@ class SyntheaClient(discord.Client):
         Sends a prompt to the server for generation. When the server is available,
         it will take up the prompt and generate a response.
         """
+        config: Config = Config()
         print(chat_history)
         chat_completion = await self.openai.chat.completions.create(
             messages=chat_history,
             model=model,
-            max_tokens=self.config["max_new_tokens"],
-            presence_penalty=self.config["presence_penalty"],
-            frequency_penalty=self.config["frequency_penalty"],
-            temperature=self.config["temperature"],
+            max_tokens=config.max_new_tokens,
+            presence_penalty=config.presence_penalty,
+            frequency_penalty=config.frequency_penalty,
+            temperature=config.temperature,
             seed=-1,
-            top_p=self.config["top_p"]
+            top_p=config.top_p
         )
         # TODO: Add error handling
 
@@ -269,6 +283,18 @@ class SyntheaClient(discord.Client):
         )
 
         await self.send_response(response_text=response, embed=embed, message_to_reply=message)
+
+    async def send_response_as_system(self, response: str, message: discord.Message):
+        """
+        Sends a simple response annotated as system. System-annotated messages
+        are ignored for chat history purposes.
+        """
+        # create an embed to extend the character count
+        embed: discord.Embed = discord.Embed(
+            description=response,
+        )
+        embed.set_footer(text=SYSTEM_TAG)
+        await self.send_response(response_text=response, embed=embed, message_to_reply=message, add_buttons=False)
 
     async def send_response_as_character(
         self, response: str, char_data: dict[str, str], message: discord.Message
@@ -313,6 +339,7 @@ class SyntheaClient(discord.Client):
         message_to_reply: discord.Message = None,
         response_text: Optional[str] = None,
         embed: Optional[discord.Embed] = None,
+        add_buttons: bool = True,
         _file: Optional[discord.Embed] = None,
     ):
         """
@@ -340,8 +367,9 @@ class SyntheaClient(discord.Client):
         bot_message: discord.Message = await message_to_reply.reply(mention_author=True, embed=embed)
 
         # add controls
-        await bot_message.add_reaction("🗑️")
-        await bot_message.add_reaction("🔁")
+        if add_buttons:
+            await bot_message.add_reaction("🗑️")
+            await bot_message.add_reaction("🔁")
 
     async def _get_character_replied_to(self, message: discord.Message) -> str | None:
         """
