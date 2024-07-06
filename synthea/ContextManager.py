@@ -4,6 +4,7 @@ Generate a prompt for the AI to respond to, given the
 message history and persona.
 """
 from typing import AsyncIterator, Optional
+import asyncio
 import discord
 import pypdf
 from jinja2 import Environment
@@ -214,6 +215,19 @@ class ContextManager:
         messages.insert(0, {"role": "system", "content": system_prompt if system_prompt else default_system_prompt})
 
         return messages, args
+    
+    async def read_attachment(self, message: discord.Attachment):
+        attachment_string = ""
+        if "text" in message.content_type:
+            attachment_bytes = await message.read()
+            if "txt" in message.content_type:
+                attachment_string = attachment_bytes.decode()
+            elif "pdf" in message.content_type:
+                attachment_string = pypdf.PdfReader(attachment_bytes)
+
+        print("Obtained the following text from the attachment as a string")
+        print(attachment_string)
+        return attachment_string
 
     def _get_text(self, message: discord.Message, config: Config):
         """
@@ -234,6 +248,12 @@ class ContextManager:
                 text = message.clean_content
         else:
             text = message.clean_content
+
+        # Iterate through any attachments associated with the message
+        for attachment in message.attachments:
+            loop = asyncio.get_event_loop()
+            attachment_content = loop.run_until_complete(self.read_attachment(attachment))
+            text = text + "\n\n" + attachment_content
 
         tokens = len(text) // self.EST_CHARS_PER_TOKEN
         return text, tokens
