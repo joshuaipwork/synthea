@@ -217,12 +217,11 @@ class ContextManager:
     
     async def read_attachment(self, message: discord.Attachment):
         attachment_string = ""
-        if "text" in message.content_type:
-            attachment_bytes = await message.read()
-            if "txt" in message.content_type:
-                attachment_string = attachment_bytes.decode()
-            elif "pdf" in message.content_type:
-                attachment_string = pypdf.PdfReader(attachment_bytes)
+        attachment_bytes = await message.read()
+        if "text/plain" in message.content_type:
+            attachment_string = attachment_bytes.decode()
+        elif "application/pdf" in message.content_type:
+            attachment_string = pypdf.PdfReader(attachment_bytes)
 
         print("Obtained the following text from the attachment as a string")
         print(attachment_string)
