@@ -5,7 +5,9 @@ message history and persona.
 """
 from typing import AsyncIterator, Optional
 import discord
+import pypdf
 from jinja2 import Environment
+import os
 import yaml
 
 from synthea.CommandParser import ChatbotParser, CommandError, ParsedArgs, ParserExitedException
@@ -148,7 +150,7 @@ class ContextManager:
                 if not system_prompt and args.use_as_system_prompt:
                     system_prompt = args.prompt
                     continue
-            text, added_tokens = self._get_text(message, config)
+            text, added_tokens = await self._get_text(message, config)
 
             # # 
             if not args and message.author.id == self.bot_user_id:
@@ -182,8 +184,30 @@ class ContextManager:
         messages.insert(0, {"role": "system", "content": system_prompt if system_prompt else default_system_prompt})
 
         return messages, args
+    
+    async def read_attachment(self, message: discord.Attachment):
+        attachment_string = ""
+        attachment_bytes = await message.read()
+        if "text/plain" in message.content_type:
+            attachment_string = attachment_bytes.decode()
+        elif "application/pdf" in message.content_type:
+            print("Saving the pdf attachment")
+            await message.save(message.filename)
+            reader = pypdf.PdfReader(message.filename)
 
-    def _get_text(self, message: discord.Message, config: Config):
+            print(f"Found {len(reader.pages)} pages in PDF. Reading them.")
+            for page in reader.pages:
+                page_text = page.extract_text()
+                attachment_string = attachment_string + "\n" + page_text
+            
+            print("Removing the saved file")
+            os.remove(message.filename)
+
+        print("Obtained the following text from the attachment as a string")
+        print(attachment_string)
+        return attachment_string
+
+    async def _get_text(self, message: discord.Message, config: Config):
         """
         Gets the text from a message and counts the tokens.
 
@@ -202,6 +226,11 @@ class ContextManager:
                 text = message.clean_content
         else:
             text = message.clean_content
+
+        # Iterate through any attachments associated with the message
+        for attachment in message.attachments:
+            attachment_content = await self.read_attachment(attachment)
+            text = text + "\n\n" + attachment_content
 
         tokens = len(text) // self.EST_CHARS_PER_TOKEN
         return text, tokens
