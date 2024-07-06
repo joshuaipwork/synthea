@@ -5,6 +5,7 @@ message history and persona.
 """
 from typing import AsyncIterator, Optional
 import discord
+import pypdf
 from jinja2 import Environment
 import yaml
 
