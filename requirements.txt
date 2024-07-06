@@ -7,3 +7,4 @@ transformers>=4.31.0
 # llama-cpp-python is also installed, but because of special arguments it is installed within install.sh instead.
 pytest==7.4.0
 pytest-dependency==0.5.1
+openai

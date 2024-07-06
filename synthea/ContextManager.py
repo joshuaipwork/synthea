@@ -205,7 +205,7 @@ class ContextManager:
             if message.author.id == self.bot_user_id:
                 messages.insert(0, {"role": "assistant", "content": text})
             else:
-                messages.insert(0, {"role": "user", "content": text})
+                messages.insert(0, {"role": "user", "content": f"Message from {message.author.display_name} \n {text}"})
             
             token_count += added_tokens
 
