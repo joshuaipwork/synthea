@@ -12,37 +12,6 @@ from synthea.CommandParser import ChatbotParser, CommandError, ParsedArgs, Parse
 from synthea import SyntheaClient
 from synthea.Config import Config
 
-class ThreadHistoryIterator:
-    """
-    An async iterator which follow replies in a thread until it reaches the oldest message
-    in the thread. Unlike discord.Thread.history(), this iterator will parse commands into
-    a chat history.
-    """
-
-    def __init__(self, starting_message: discord.Message):
-        self.message = starting_message
-        self.thread: discord.Thread = self.message.channel
-        self.thread_history = self.thread.history(limit=50)
-
-    def __aiter__(self):
-        return self
-
-    async def __anext__(self):
-        # if we have already reached the beginning of the thread, there are no further messages to read
-        if self.message.id == self.thread.id:
-            raise StopAsyncIteration
-
-        try:
-            self.message = await self.thread_history.__anext__()
-            # self.message = await self.message.channel.fetch_message(self.message.reference.message_id)
-            return self.message
-        except (discord.NotFound, discord.HTTPException, discord.Forbidden):
-            # the user may have deleted their message
-            # either way, we can't follow the history anymore
-            # pylint: disable-next=raise-missing-from
-            raise StopAsyncIteration
-
-
 class ReplyChainIterator:
     """
     An async iterator which follows a chain of discord message replies until it reaches the end
