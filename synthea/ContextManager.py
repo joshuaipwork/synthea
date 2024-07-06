@@ -7,6 +7,7 @@ from typing import AsyncIterator, Optional
 import discord
 import pypdf
 from jinja2 import Environment
+import os
 import yaml
 
 from synthea.CommandParser import ChatbotParser, CommandError, ParsedArgs, ParserExitedException
@@ -221,7 +222,17 @@ class ContextManager:
         if "text/plain" in message.content_type:
             attachment_string = attachment_bytes.decode()
         elif "application/pdf" in message.content_type:
-            attachment_string = pypdf.PdfReader(attachment_bytes)
+            print("Saving the pdf attachment")
+            await message.save(message.filename)
+            reader = pypdf.PdfReader(message.filename)
+
+            print(f"Found {len(reader.pages)} pages in PDF. Reading them.")
+            for page in reader.pages:
+                page_text = page.extract_text()
+                attachment_string = attachment_string + "\n" + page_text
+            
+            print("Removing the saved file")
+            os.remove(message.filename)
 
         print("Obtained the following text from the attachment as a string")
         print(attachment_string)
