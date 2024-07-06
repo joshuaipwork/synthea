@@ -4,7 +4,6 @@ Generate a prompt for the AI to respond to, given the
 message history and persona.
 """
 from typing import AsyncIterator, Optional
-import asyncio
 import discord
 import pypdf
 from jinja2 import Environment
@@ -181,7 +180,7 @@ class ContextManager:
                 if not system_prompt and args.use_as_system_prompt:
                     system_prompt = args.prompt
                     continue
-            text, added_tokens = self._get_text(message, config)
+            text, added_tokens = await self._get_text(message, config)
 
             # # 
             if not args and message.author.id == self.bot_user_id:
@@ -229,7 +228,7 @@ class ContextManager:
         print(attachment_string)
         return attachment_string
 
-    def _get_text(self, message: discord.Message, config: Config):
+    async def _get_text(self, message: discord.Message, config: Config):
         """
         Gets the text from a message and counts the tokens.
 
@@ -251,8 +250,7 @@ class ContextManager:
 
         # Iterate through any attachments associated with the message
         for attachment in message.attachments:
-            loop = asyncio.get_event_loop()
-            attachment_content = loop.run_until_complete(self.read_attachment(attachment))
+            attachment_content = await self.read_attachment(attachment)
             text = text + "\n\n" + attachment_content
 
         tokens = len(text) // self.EST_CHARS_PER_TOKEN
