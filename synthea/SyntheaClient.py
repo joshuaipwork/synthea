@@ -241,6 +241,7 @@ class SyntheaClient(discord.Client):
 
             print(f"Resp for {message_from_user.author} with char {char_id}")
             response = await self.queue_for_generation(model, chat_history)
+            response = self._preprocess_response(response)
             await self.send_response_as_character(response, char_data, message_from_user)
         # send a simple plaintext response without adopting a character
         else:
@@ -250,7 +251,16 @@ class SyntheaClient(discord.Client):
             # )
             print(f"Generating for {message_from_user.author}")
             response = await self.queue_for_generation(model, chat_history)
+            response = self._preprocess_response(response)
             await self.send_response_as_base(response, message_from_user)
+
+    def _preprocess_response(self, response: str) -> str:
+        """
+        Does some simple preprocessing to improve the quality of responses
+        """
+        if response.startswith("Message from Syn"):
+            return response[len("Message from Syn"):]
+        return response
 
     async def queue_for_generation(self, model: str, chat_history: list[dict[str, str]]) -> str:
         """
