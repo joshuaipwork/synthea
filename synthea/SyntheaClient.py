@@ -140,7 +140,7 @@ class SyntheaClient(discord.Client):
 
         # by default, don't respond to messages unless it was directed at the bot
         message_invokes_chatbot: bool = False
-        if message.content.startswith(COMMAND_START_STR):
+        if message.content.lower().startswith(COMMAND_START_STR.lower()):
             # if the message starts with the start string, then it was definitely directed at the bot.
             message_invokes_chatbot = True
         elif message.reference:
