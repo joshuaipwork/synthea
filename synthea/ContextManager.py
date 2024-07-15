@@ -150,7 +150,7 @@ class ContextManager:
                 if not system_prompt and args.use_as_system_prompt:
                     system_prompt = args.prompt
                     continue
-            text, added_tokens = await self._get_text(message, config)
+            text, added_tokens = await self._get_text(message, history_token_limit - token_count, config)
 
             # # 
             if not args and message.author.id == self.bot_user_id:
@@ -188,7 +188,7 @@ class ContextManager:
     async def read_attachment(self, message: discord.Attachment):
         attachment_string = ""
         attachment_bytes = await message.read()
-        if "text/plain" in message.content_type:
+        if not message.content_type or message.content_type.startswith("text/"):
             attachment_string = attachment_bytes.decode()
         elif "application/pdf" in message.content_type:
             print("Saving the pdf attachment")
@@ -203,11 +203,11 @@ class ContextManager:
             print("Removing the saved file")
             os.remove(message.filename)
 
-        print("Obtained the following text from the attachment as a string")
-        print(attachment_string)
+        print(f"Obtained the text from the [{message.content_type}] attachment as a string")
+        print(f"{attachment_string}")
         return attachment_string
 
-    async def _get_text(self, message: discord.Message, config: Config):
+    async def _get_text(self, message: discord.Message, remaining_tokens: int, config: Config) -> tuple[str, int]:
         """
         Gets the text from a message and counts the tokens.
 
@@ -230,7 +230,12 @@ class ContextManager:
         # Iterate through any attachments associated with the message
         for attachment in message.attachments:
             attachment_content = await self.read_attachment(attachment)
-            text = text + "\n\n" + attachment_content
+            if not attachment_content or attachment_content.isspace():
+                text = text + "\n\nA file was attached to this message, but it is either empty or is not a file type you can read."
+            elif (len(attachment_content) // self.EST_CHARS_PER_TOKEN > remaining_tokens):
+                text = text + "\n\nA file was attached to this message, but it was too large to be read."
+            else:
+                text = text + "\n\nA file was attached to this message. Here are the contents:\n" + attachment_content
 
         tokens = len(text) // self.EST_CHARS_PER_TOKEN
         return text, tokens
