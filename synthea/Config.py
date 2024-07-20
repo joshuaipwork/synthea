@@ -22,3 +22,7 @@ class Config:
         self.presence_penalty: float = loaded_file["presence_penalty"]
         self.frequency_penalty: float = loaded_file["frequency_penalty"]
         self.top_p: float = loaded_file["top_p"]
+
+        # server parameters
+        self.api_key: str = loaded_file["api_key"]
+        self.api_base_url: str = loaded_file["api_base_url"]

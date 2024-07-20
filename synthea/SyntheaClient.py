@@ -25,8 +25,8 @@ from synthea.character_errors import (
     CharacterNotOnServerError,
 )
 
-COMMAND_START_STR: str = "!syn "
 CHAR_LIMIT: int = 2000  # discord's character limit
+DISCORD_EMBED_LIMIT: int = 4000  # discord's character limit
 FOOTER_PATTERN: str = r"^(.*) \| (\d+)$"
 SYSTEM_TAG = "System"
 
@@ -56,13 +56,12 @@ class SyntheaClient(discord.Client):
     message_id_to_response_index: dict[int, int] = {}
 
     def __init__(self, intents):
-        with open("config.yaml", "r", encoding="utf-8") as file:
-            self.config = yaml.safe_load(file)
-
         super().__init__(intents=intents)
+
+        self.config: Config = Config()
         self.openai: openai.AsyncOpenAI = openai.AsyncOpenAI(
-            api_key=self.config["api_key"],
-            base_url=self.config["api_base_url"]
+            api_key=self.config.api_key,
+            base_url=self.config.api_base_url
         )
         self.char_db = CharactersDatabase()
 
@@ -127,7 +126,7 @@ class SyntheaClient(discord.Client):
         """
         Respond to messages sent to the bot.
 
-        If a message is not by a user or fails to start with the COMMAND_START_STR, then
+        If a message is not by a user or fails to start with the command start string, then
         the message is ignored.
         """
         # prevent bot from responding to itself
@@ -140,7 +139,7 @@ class SyntheaClient(discord.Client):
 
         # by default, don't respond to messages unless it was directed at the bot
         message_invokes_chatbot: bool = False
-        if message.content.lower().startswith(COMMAND_START_STR.lower()):
+        if message.content.lower().startswith(self.config.command_start_str.lower()):
             # if the message starts with the start string, then it was definitely directed at the bot.
             message_invokes_chatbot = True
         elif message.reference:
@@ -259,7 +258,9 @@ class SyntheaClient(discord.Client):
         Does some simple preprocessing to improve the quality of responses
         """
         if response.startswith("Message from Syn"):
-            return response[len("Message from Syn"):]
+            response = response[len("Message from Syn"):]
+        if len(response) > DISCORD_EMBED_LIMIT:
+            response = response[:DISCORD_EMBED_LIMIT]
         return response
 
     async def queue_for_generation(self, model: str, chat_history: list[dict[str, str]]) -> str:

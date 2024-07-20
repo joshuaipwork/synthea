@@ -2,6 +2,8 @@ import argparse
 from typing import IO, NoReturn
 import yaml
 
+from synthea.Config import Config
+
 
 class CommandError(ValueError):
     """
@@ -86,16 +88,15 @@ class ChatbotParser:
         )
 
         # load config
-        with open("config.yaml", "r", encoding="utf-8") as f:
-            self.config = yaml.safe_load(f)
+        self.config = Config()
 
     def parse(self, command: str) -> ParsedArgs:
         """
         Parses a command given by the user.
         """
         # remove the command start string if it was present.
-        if command.startswith(self.config["command_start_str"]):
-            command = command[len(self.config["command_start_str"]) + 1 :]
+        if command.lower().startswith(self.config.command_start_str.lower()):
+            command = command[len(self.config.command_start_str):]
         args: ParsedArgs = self.parser.parse_args(command.split(), namespace=ParsedArgs())
         args.prompt = " ".join(args.prompt)
         return args
