@@ -130,7 +130,7 @@ class ContextManager:
 
         # pieces of the prompts are appended to the list then assembled in reverse order into the final prompt
         token_count: int = 0
-        args: ParsedArgs = None
+        args: ParsedArgs | None = None
         system_prompt = None
 
         # use provided system prompt
@@ -143,7 +143,7 @@ class ContextManager:
         async for message in history_iterator:
             # some messages in the chain may be commands for the bot
             # if so, parse only the prompt in each command in order to not confuse the bot
-            if message.clean_content.startswith(SyntheaClient.COMMAND_START_STR):
+            if message.clean_content.lower().startswith(config.command_start_str.lower()):
                 message_args: ParsedArgs = self.parser.parse(message.clean_content)
                 if not args:
                     args = message_args
@@ -217,7 +217,8 @@ class ContextManager:
         # when the bot plays characters, it stores text in embeds rather than content
         if message.author.id == self.bot_user_id and message.embeds:
             text = message.embeds[0].description
-        elif message.clean_content.startswith(config.command_start_str):
+        # check if the message is a command. If so, only include the prompt from the command
+        elif message.clean_content.lower().startswith(config.command_start_str.lower()):
             try:
                 args = ChatbotParser().parse(message.clean_content)
                 text = args.prompt
