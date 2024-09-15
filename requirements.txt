@@ -4,6 +4,7 @@ torch
 torchvision
 torchaudio
 transformers>=4.31.0
+newspaper4k
 # llama-cpp-python is also installed, but because of special arguments it is installed within install.sh instead.
 pypdf
 pytest==7.4.0

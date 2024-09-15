@@ -43,12 +43,11 @@ class CommandParser(argparse.ArgumentParser):
 
 
 class ParsedArgs:
-    def __init__(self, character=None, number=None, model=None, use_as_system_prompt=False, prompt=None):
+    def __init__(self, character=None, use_as_system_prompt=False, use_image_model=False, prompt=None):
         self.character = character
-        self.number = number
-        self.model = model
-        self.use_as_system_prompt = use_as_system_prompt
-        self.prompt = prompt
+        self.use_as_system_prompt: bool = use_as_system_prompt
+        self.use_image_model: bool = use_image_model
+        self.prompt: str = prompt
 
 class ChatbotParser:
     def __init__(self):
@@ -67,12 +66,12 @@ class ChatbotParser:
             help="The character for the bot to assume in its response.",
         )
         self.parser.add_argument(
-            "-m",
-            "-model",
-            "--model",
-            action="store",
+            "-im",
+            "--use-image-model",
+            action="store_true",
             default=None,
-            help="The model for the bot to use in its response.",
+            dest="use_image_model",
+            help="Use the image model to generate the response.",
         )
         self.parser.add_argument(
             "-sp",
@@ -97,6 +96,8 @@ class ChatbotParser:
         # remove the command start string if it was present.
         if command.lower().startswith(self.config.command_start_str.lower()):
             command = command[len(self.config.command_start_str):]
+
+        # convert the parsed args into an object for better type matching
         args: ParsedArgs = self.parser.parse_args(command.split(), namespace=ParsedArgs())
         args.prompt = " ".join(args.prompt)
         return args
