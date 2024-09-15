@@ -4,6 +4,7 @@ The discord client which contains the bulk of the logic for the chatbot.
 import math
 import multiprocessing
 import random
+import re
 import traceback
 from typing import Optional
 import discord
@@ -18,6 +19,9 @@ from synthea.CharactersDatabase import CharactersDatabase
 from synthea.CommandParser import ChatbotParser, ParsedArgs
 from synthea.Config import Config
 from synthea.ContextManager import ContextManager
+from synthea.VisionModel import VisionModel
+from synthea.LanguageModel import LanguageModel
+from synthea.Model import Model
 from synthea.dtos.GenerationRequest import GenerationRequest
 from synthea.dtos.ResponseUpdate import ResponseUpdate
 from synthea.character_errors import (
@@ -58,11 +62,9 @@ class SyntheaClient(discord.Client):
     def __init__(self, intents):
         super().__init__(intents=intents)
 
+        self.language_model: LanguageModel = LanguageModel()
+        self.image_model: VisionModel = VisionModel()
         self.config: Config = Config()
-        self.openai: openai.AsyncOpenAI = openai.AsyncOpenAI(
-            api_key=self.config.api_key,
-            base_url=self.config.api_base_url
-        )
         self.char_db = CharactersDatabase()
 
 
@@ -204,10 +206,11 @@ class SyntheaClient(discord.Client):
         )
 
         char_id: str = None
-        model: str = config.default_model
+        model: Model = self.language_model
         if args:
-            if model:
-                model = args.model
+            if args.use_image_model:
+                print("Using image model")
+                model = self.image_model
             char_id = args.character
 
         # if the user responded to the bot playing a character, respond as that character
@@ -215,7 +218,8 @@ class SyntheaClient(discord.Client):
         if replied_char_id:
             char_id = replied_char_id
 
-        # send a response as a character
+        # parse the chat again if it's a character
+        # TODO: simplify
         if char_id and char_id != SYSTEM_TAG:
             can_access = self.char_db.can_access_character(
                 char_id=char_id,
@@ -238,51 +242,43 @@ class SyntheaClient(discord.Client):
                 message_from_user, system_prompt=system_prompt
             )
 
+        response = await model.queue_for_generation(chat_history)
+        response = self._preprocess_response(response)
+
+        if char_id and char_id != SYSTEM_TAG:
             print(f"Resp for {message_from_user.author} with char {char_id}")
-            response = await self.queue_for_generation(model, chat_history)
-            response = self._preprocess_response(response)
+            print(response)
             await self.send_response_as_character(response, char_data, message_from_user)
-        # send a simple plaintext response without adopting a character
         else:
-        # generate a response and send it to the user.
-            # chat_history = await context_manager.generate_chat_history_from_chat(
-            #     message_from_user, system_prompt=self.config["system_prompt"]
-            # )
-            print(f"Generating for {message_from_user.author}")
-            response = await self.queue_for_generation(model, chat_history)
-            response = self._preprocess_response(response)
+            print(f"Resp for {message_from_user.author}")
+            print(response)
             await self.send_response_as_base(response, message_from_user)
 
     def _preprocess_response(self, response: str) -> str:
         """
         Does some simple preprocessing to improve the quality of responses
         """
-        if response.startswith("Message from Syn"):
-            response = response[len("Message from Syn"):]
+        if response.lower().startswith(f"Message from {self.config.bot_name}".lower()):
+            response = response[len(f"Message from {self.config.bot_name}"):]
+        if response.lower().startswith(f"Message from Syn".lower()):
+            response = response[len(f"Message from Syn"):]
+
+        # remove roleplay chat tags
+        # This regex now uses a capture group to match the rest of the line
+        match = re.match(r'^[^:\n]+:\s(.*)$', response, flags=re.DOTALL)
+        if match:
+            # If there's a match, return the captured group (rest of the line)
+            response = match.group(1)
+        if response.lower().startswith("Syn:".lower()):
+            response = response[len("Syn:"):]
         if len(response) > DISCORD_EMBED_LIMIT:
             response = response[:DISCORD_EMBED_LIMIT]
+
+        # remove stop words at end
+        for stop_word in self.config.stop_words:
+            if response.endswith(stop_word):
+                response = response[:len(response)-len(stop_word)]
         return response
-
-    async def queue_for_generation(self, model: str, chat_history: list[dict[str, str]]) -> str:
-        """
-        Sends a prompt to the server for generation. When the server is available,
-        it will take up the prompt and generate a response.
-        """
-        config: Config = Config()
-        print(chat_history)
-        chat_completion = await self.openai.chat.completions.create(
-            messages=chat_history,
-            model=model,
-            max_tokens=config.max_new_tokens,
-            presence_penalty=config.presence_penalty,
-            frequency_penalty=config.frequency_penalty,
-            temperature=config.temperature,
-            seed=-1,
-            top_p=config.top_p
-        )
-        # TODO: Add error handling
-
-        return chat_completion.choices[0].message.content
 
     async def send_response_as_base(self, response: str, message: discord.Message):
         """
