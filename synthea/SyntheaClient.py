@@ -1,7 +1,7 @@
 """
 The discord client which contains the bulk of the logic for the chatbot.
 """
-from datetime import time
+from datetime import datetime, time
 import logging
 import math
 import multiprocessing
@@ -37,6 +37,13 @@ FOOTER_PATTERN: str = r"^(.*) \| (\d+)$"
 CHAT_TAG_PATTERN: str = r'^[^:\n]{2,32}:\s(.*)$'
 SYSTEM_TAG = "System"
 
+
+CLIENT_LOGGER = logging.getLogger("synthea-client-logger")
+console_handler = logging.StreamHandler()
+formatter = logging.Formatter("%(asctime)s,%(msecs)03d %(levelname)-8s [%(filename)s:%(lineno)d] %(message)s", datefmt="%Y-%m-%d:%H:%M:%S")
+console_handler.setFormatter(formatter)
+CLIENT_LOGGER.addHandler(console_handler)
+
 # This example requires the 'message_content' intent.
 class SyntheaClient(discord.Client):
     """
@@ -71,25 +78,18 @@ class SyntheaClient(discord.Client):
         self.config: Config = Config()
         self.char_db = CharactersDatabase()
 
-        self.client_logger = logging.getLogger("synthea-client-logger")
-        console_handler = logging.StreamHandler()
-        formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-        console_handler.setFormatter(formatter)
-        self.client_logger.addHandler(console_handler)
-
-
     # async def setup_hook(self):
     #     """
     #     When the bot is started and logs in, load the model.
     #     """
    
-    def measure_time(self, func):
+    def measure_time(func):
         def wrapper(*args, **kwargs):
-            start_time = time.time()
+            start_time = datetime.now()
             result = func(*args, **kwargs)
-            end_time = time.time()
-            execution_time = end_time - start_time
-            self.client_logger.info(f"Function {func.__name__} took {execution_time:.4f} seconds to execute.")
+            end_time = datetime.now()
+            execution_time = (end_time - start_time).seconds
+            CLIENT_LOGGER.info(f"Function {func.__name__} took {execution_time:.4f} seconds to execute.")
             return result
         return wrapper
 
