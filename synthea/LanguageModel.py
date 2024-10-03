@@ -69,30 +69,30 @@ class LanguageModel(Model):
             prompt = template.render(messages=chat_history, add_generation_prompt=True)
 
             # generate the response
-            base_url = 'http://localhost:8080'
-            # params = {'param1': 'value1', 'param2': 'value2'}
-            
+            headers = {"Authorization": f"Bearer {config.api_key}"}
+
             # Define the request body
             body = {
                 'prompt': prompt,
                 'stop': config.stop_words,
                 'cache_prompt': True,
-                'n_predict': config.max_new_tokens
+                'n_predict': config.max_new_tokens,
             }
 
             # Create an aiohttp session
             async with aiohttp.ClientSession() as session:
                 # Make the POST request
-                async with session.post(config.api_base_url, json=body) as response:
+                async with session.post(config.api_base_url, json=body, headers=headers) as response:
                     # Check if the request was successful
                     if response.status == 200:
                         # Parse the JSON response
                         data = await response.json()
                         print("Response data:", data)
                     else:
+                        response_text: str = await response.text()
                         print(f"Error: HTTP {response.status}")
-                        print(await response.text())
-                        raise requests.exceptions.HTTPError(f"{response.status} Response from inference server: {response.text()}")
+                        print(response_text)
+                        raise requests.exceptions.HTTPError(f"{response.status} Response from inference server: {response_text}")
             generation_count += 1
             # TODO: Create a type for this
             last_completion = data["content"]
