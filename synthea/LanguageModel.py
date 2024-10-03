@@ -87,11 +87,11 @@ class LanguageModel(Model):
                     if response.status == 200:
                         # Parse the JSON response
                         data = await response.json()
-                        print("Response data:", data)
+                        inference_logger.info("Response data:", data)
                     else:
                         response_text: str = await response.text()
-                        print(f"Error: HTTP {response.status}")
-                        print(response_text)
+                        inference_logger.error(f"Error: HTTP {response.status}")
+                        inference_logger.error(response_text)
                         raise requests.exceptions.HTTPError(f"{response.status} Response from inference server: {response_text}")
             generation_count += 1
             # TODO: Create a type for this
@@ -130,7 +130,7 @@ class LanguageModel(Model):
                 tool_response_message["content"] = tool_response_text
                 tool_response_message["role"] = "tool"         
                 chat_history.append(tool_response_message)
-                inference_logger.info(f"Responded to model:\n {tool_response_message}")
+                # inference_logger.info(f"Responded to model:\n {tool_response_message}")
             else:
                 # no tool call, so we can just quit out
                 needs_call = False
