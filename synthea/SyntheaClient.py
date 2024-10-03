@@ -37,8 +37,9 @@ FOOTER_PATTERN: str = r"^(.*) \| (\d+)$"
 CHAT_TAG_PATTERN: str = r'^[^:\n]{2,32}:\s(.*)$'
 SYSTEM_TAG = "System"
 
-
 CLIENT_LOGGER = logging.getLogger("synthea-client-logger")
+CLIENT_LOGGER.handlers.clear()  # Clear any existing handlers
+CLIENT_LOGGER.propagate = False  # Prevent propagation to parent loggers
 console_handler = logging.StreamHandler()
 formatter = logging.Formatter("%(asctime)s,%(msecs)03d %(levelname)-8s [%(filename)s:%(lineno)d] %(message)s", datefmt="%Y-%m-%d:%H:%M:%S")
 console_handler.setFormatter(formatter)
@@ -84,14 +85,26 @@ class SyntheaClient(discord.Client):
     #     """
    
     def measure_time(func):
-        def wrapper(*args, **kwargs):
+        async def async_wrapper(*args, **kwargs):
+            start_time = datetime.now()
+            result = await func(*args, **kwargs)
+            end_time = datetime.now()
+            execution_time = (end_time - start_time).total_seconds()
+            CLIENT_LOGGER.info(f"Async function {func.__name__} took {execution_time:.4f} seconds to finish.")
+            return result
+
+        def sync_wrapper(*args, **kwargs):
             start_time = datetime.now()
             result = func(*args, **kwargs)
             end_time = datetime.now()
-            execution_time = (end_time - start_time).seconds
+            execution_time = (end_time - start_time).total_seconds()
             CLIENT_LOGGER.info(f"Function {func.__name__} took {execution_time:.4f} seconds to execute.")
             return result
-        return wrapper
+
+        if asyncio.iscoroutinefunction(func):
+            return async_wrapper
+        else:
+            return sync_wrapper
 
     async def on_ready(self):
         """
@@ -105,9 +118,9 @@ class SyntheaClient(discord.Client):
         if not self.synced:
             await self.tree.sync()
             self.synced = True
-            print("Synced command tree")
+            CLIENT_LOGGER.info("Synced command tree")
 
-        print(f"Logged on as {self.user}!")
+        CLIENT_LOGGER.info(f"Logged on as {self.user}!")
 
     async def on_reaction_add(self, reaction: discord.Reaction, user):
         """
@@ -173,7 +186,7 @@ class SyntheaClient(discord.Client):
                 if replied_message.author.id == self.user.id:
                     message_invokes_chatbot = True
             except (discord.NotFound, discord.HTTPException, discord.Forbidden) as exc:
-                print(exc)
+                CLIENT_LOGGER.error(exc)
             character_replied_to = await self._get_character_replied_to(message)
             if character_replied_to:
                 # check if this webhook represents a character that the chatbot adopted
@@ -230,7 +243,7 @@ class SyntheaClient(discord.Client):
         model: Model = self.language_model
         if args:
             if args.use_image_model:
-                print("Using image model")
+                CLIENT_LOGGER.info("Using image model")
                 model = self.image_model
             char_id = args.character
 
@@ -267,12 +280,12 @@ class SyntheaClient(discord.Client):
         response = self._preprocess_response(response)
 
         if char_id and char_id != SYSTEM_TAG:
-            print(f"Resp for {message_from_user.author} with char {char_id}")
-            print(response)
+            CLIENT_LOGGER.info(f"Responded to {message_from_user.author} with char {char_id}")
+            CLIENT_LOGGER.info(response)
             await self.send_response_as_character(response, char_data, message_from_user)
         else:
-            print(f"Resp for {message_from_user.author}")
-            print(response)
+            CLIENT_LOGGER.info(f"Responded to {message_from_user.author}")
+            CLIENT_LOGGER.info(response)
             await self.send_response_as_base(response, message_from_user)
 
     def _preprocess_response(self, response: str) -> str:
