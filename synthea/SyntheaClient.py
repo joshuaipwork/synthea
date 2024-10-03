@@ -1,9 +1,12 @@
 """
 The discord client which contains the bulk of the logic for the chatbot.
 """
+from datetime import time
+import logging
 import math
 import multiprocessing
 import random
+import re
 import traceback
 from typing import Optional
 import discord
@@ -18,6 +21,9 @@ from synthea.CharactersDatabase import CharactersDatabase
 from synthea.CommandParser import ChatbotParser, ParsedArgs
 from synthea.Config import Config
 from synthea.ContextManager import ContextManager
+from synthea.VisionModel import VisionModel
+from synthea.LanguageModel import LanguageModel
+from synthea.Model import Model
 from synthea.dtos.GenerationRequest import GenerationRequest
 from synthea.dtos.ResponseUpdate import ResponseUpdate
 from synthea.character_errors import (
@@ -25,9 +31,10 @@ from synthea.character_errors import (
     CharacterNotOnServerError,
 )
 
-COMMAND_START_STR: str = "!syn "
 CHAR_LIMIT: int = 2000  # discord's character limit
+DISCORD_EMBED_LIMIT: int = 4000  # discord's character limit
 FOOTER_PATTERN: str = r"^(.*) \| (\d+)$"
+CHAT_TAG_PATTERN: str = r'^[^:\n]{2,32}:\s(.*)$'
 SYSTEM_TAG = "System"
 
 # This example requires the 'message_content' intent.
@@ -40,6 +47,7 @@ class SyntheaClient(discord.Client):
     char_db: CharactersDatabase = None
     synced = False
     tree: app_commands.CommandTree = None
+    client_logger = None
 
     # increments each time we respond to a user. used for the next index in in_progress_response
     response_index: int = 0
@@ -56,21 +64,34 @@ class SyntheaClient(discord.Client):
     message_id_to_response_index: dict[int, int] = {}
 
     def __init__(self, intents):
-        with open("config.yaml", "r", encoding="utf-8") as file:
-            self.config = yaml.safe_load(file)
-
         super().__init__(intents=intents)
-        self.openai: openai.AsyncOpenAI = openai.AsyncOpenAI(
-            api_key=self.config["api_key"],
-            base_url=self.config["api_base_url"]
-        )
+
+        self.language_model: LanguageModel = LanguageModel()
+        self.image_model: VisionModel = VisionModel()
+        self.config: Config = Config()
         self.char_db = CharactersDatabase()
+
+        self.client_logger = logging.getLogger("synthea-client-logger")
+        console_handler = logging.StreamHandler()
+        formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+        console_handler.setFormatter(formatter)
+        self.client_logger.addHandler(console_handler)
 
 
     # async def setup_hook(self):
     #     """
     #     When the bot is started and logs in, load the model.
     #     """
+   
+    def measure_time(self, func):
+        def wrapper(*args, **kwargs):
+            start_time = time.time()
+            result = func(*args, **kwargs)
+            end_time = time.time()
+            execution_time = end_time - start_time
+            self.client_logger.info(f"Function {func.__name__} took {execution_time:.4f} seconds to execute.")
+            return result
+        return wrapper
 
     async def on_ready(self):
         """
@@ -127,7 +148,7 @@ class SyntheaClient(discord.Client):
         """
         Respond to messages sent to the bot.
 
-        If a message is not by a user or fails to start with the COMMAND_START_STR, then
+        If a message is not by a user or fails to start with the command start string, then
         the message is ignored.
         """
         # prevent bot from responding to itself
@@ -140,7 +161,7 @@ class SyntheaClient(discord.Client):
 
         # by default, don't respond to messages unless it was directed at the bot
         message_invokes_chatbot: bool = False
-        if message.content.lower().startswith(COMMAND_START_STR.lower()):
+        if message.content.lower().startswith(self.config.command_start_str.lower()):
             # if the message starts with the start string, then it was definitely directed at the bot.
             message_invokes_chatbot = True
         elif message.reference:
@@ -178,6 +199,7 @@ class SyntheaClient(discord.Client):
 
         await message.remove_reaction("⏳", self.user)
 
+    @measure_time
     async def respond_to_user(self, message_from_user: discord.Message):
         """
         Generates and send a response to a user message from the chatbot
@@ -205,10 +227,11 @@ class SyntheaClient(discord.Client):
         )
 
         char_id: str = None
-        model: str = config.default_model
+        model: Model = self.language_model
         if args:
-            if model:
-                model = args.model
+            if args.use_image_model:
+                print("Using image model")
+                model = self.image_model
             char_id = args.character
 
         # if the user responded to the bot playing a character, respond as that character
@@ -216,7 +239,8 @@ class SyntheaClient(discord.Client):
         if replied_char_id:
             char_id = replied_char_id
 
-        # send a response as a character
+        # parse the chat again if it's a character
+        # TODO: simplify
         if char_id and char_id != SYSTEM_TAG:
             can_access = self.char_db.can_access_character(
                 char_id=char_id,
@@ -239,49 +263,43 @@ class SyntheaClient(discord.Client):
                 message_from_user, system_prompt=system_prompt
             )
 
+        response = await model.queue_for_generation(chat_history)
+        response = self._preprocess_response(response)
+
+        if char_id and char_id != SYSTEM_TAG:
             print(f"Resp for {message_from_user.author} with char {char_id}")
-            response = await self.queue_for_generation(model, chat_history)
-            response = self._preprocess_response(response)
+            print(response)
             await self.send_response_as_character(response, char_data, message_from_user)
-        # send a simple plaintext response without adopting a character
         else:
-        # generate a response and send it to the user.
-            # chat_history = await context_manager.generate_chat_history_from_chat(
-            #     message_from_user, system_prompt=self.config["system_prompt"]
-            # )
-            print(f"Generating for {message_from_user.author}")
-            response = await self.queue_for_generation(model, chat_history)
-            response = self._preprocess_response(response)
+            print(f"Resp for {message_from_user.author}")
+            print(response)
             await self.send_response_as_base(response, message_from_user)
 
     def _preprocess_response(self, response: str) -> str:
         """
         Does some simple preprocessing to improve the quality of responses
         """
-        if response.startswith("Message from Syn"):
-            return response[len("Message from Syn"):]
+        if response.lower().startswith(f"Message from {self.config.bot_name}".lower()):
+            response = response[len(f"Message from {self.config.bot_name}"):]
+        if response.lower().startswith(f"Message from Syn".lower()):
+            response = response[len(f"Message from Syn"):]
+
+        # remove roleplay chat tags
+        # This regex now uses a capture group to match the rest of the line
+        match = re.match(CHAT_TAG_PATTERN, response, flags=re.DOTALL)
+        if match:
+            # If there's a match, return the captured group (rest of the line)
+            response = match.group(1)
+        if response.lower().startswith("Syn:".lower()):
+            response = response[len("Syn:"):]
+        if len(response) > DISCORD_EMBED_LIMIT:
+            response = response[:DISCORD_EMBED_LIMIT]
+
+        # remove stop words at end
+        for stop_word in self.config.stop_words:
+            if response.endswith(stop_word):
+                response = response[:len(response)-len(stop_word)]
         return response
-
-    async def queue_for_generation(self, model: str, chat_history: list[dict[str, str]]) -> str:
-        """
-        Sends a prompt to the server for generation. When the server is available,
-        it will take up the prompt and generate a response.
-        """
-        config: Config = Config()
-        print(chat_history)
-        chat_completion = await self.openai.chat.completions.create(
-            messages=chat_history,
-            model=model,
-            max_tokens=config.max_new_tokens,
-            presence_penalty=config.presence_penalty,
-            frequency_penalty=config.frequency_penalty,
-            temperature=config.temperature,
-            seed=-1,
-            top_p=config.top_p
-        )
-        # TODO: Add error handling
-
-        return chat_completion.choices[0].message.content
 
     async def send_response_as_base(self, response: str, message: discord.Message):
         """
