@@ -197,6 +197,11 @@ class ContextManager:
             token_count += added_tokens
 
         # add the system prompt
+
+        if not system_prompt:
+            system_prompt = default_system_prompt
+        if config.use_tools:
+            system_prompt += f"\n{config.tool_prompt}"
         messages.insert(0, {"role": "system", "content": [
                     {"type": "text", "text": (system_prompt if system_prompt else default_system_prompt)}
                     ]})

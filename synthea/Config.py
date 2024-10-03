@@ -26,6 +26,10 @@ class Config:
         self.top_p: float = loaded_file["top_p"]
         self.stop_words: list[str] = loaded_file["stop_words"]
 
+        # prompt parameters
+        self.tool_prompt: str = loaded_file["tool_prompt"]
+        self.use_tools: bool = bool(loaded_file["use_tools"])
+
         # server parameters
         self.api_key: str = loaded_file["api_key"]
         self.api_base_url: str = loaded_file["api_base_url"]
