@@ -1,6 +1,8 @@
 """
 The discord client which contains the bulk of the logic for the chatbot.
 """
+from datetime import time
+import logging
 import math
 import multiprocessing
 import random
@@ -32,6 +34,7 @@ from synthea.character_errors import (
 CHAR_LIMIT: int = 2000  # discord's character limit
 DISCORD_EMBED_LIMIT: int = 4000  # discord's character limit
 FOOTER_PATTERN: str = r"^(.*) \| (\d+)$"
+CHAT_TAG_PATTERN: str = r'^[^:\n]{2,32}:\s(.*)$'
 SYSTEM_TAG = "System"
 
 # This example requires the 'message_content' intent.
@@ -44,6 +47,7 @@ class SyntheaClient(discord.Client):
     char_db: CharactersDatabase = None
     synced = False
     tree: app_commands.CommandTree = None
+    client_logger = None
 
     # increments each time we respond to a user. used for the next index in in_progress_response
     response_index: int = 0
@@ -67,11 +71,27 @@ class SyntheaClient(discord.Client):
         self.config: Config = Config()
         self.char_db = CharactersDatabase()
 
+        self.client_logger = logging.getLogger("synthea-client-logger")
+        console_handler = logging.StreamHandler()
+        formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+        console_handler.setFormatter(formatter)
+        self.client_logger.addHandler(console_handler)
+
 
     # async def setup_hook(self):
     #     """
     #     When the bot is started and logs in, load the model.
     #     """
+   
+    def measure_time(self, func):
+        def wrapper(*args, **kwargs):
+            start_time = time.time()
+            result = func(*args, **kwargs)
+            end_time = time.time()
+            execution_time = end_time - start_time
+            self.client_logger.info(f"Function {func.__name__} took {execution_time:.4f} seconds to execute.")
+            return result
+        return wrapper
 
     async def on_ready(self):
         """
@@ -179,6 +199,7 @@ class SyntheaClient(discord.Client):
 
         await message.remove_reaction("⏳", self.user)
 
+    @measure_time
     async def respond_to_user(self, message_from_user: discord.Message):
         """
         Generates and send a response to a user message from the chatbot
@@ -265,7 +286,7 @@ class SyntheaClient(discord.Client):
 
         # remove roleplay chat tags
         # This regex now uses a capture group to match the rest of the line
-        match = re.match(r'^[^:\n]+:\s(.*)$', response, flags=re.DOTALL)
+        match = re.match(CHAT_TAG_PATTERN, response, flags=re.DOTALL)
         if match:
             # If there's a match, return the captured group (rest of the line)
             response = match.group(1)
