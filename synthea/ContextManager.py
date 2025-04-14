@@ -243,7 +243,7 @@ class ContextManager:
             print("Removing the saved file")
             os.remove(attachment.filename)
         elif attachment.content_type.startswith("image/"):
-            if not config.image_processing_enabled:
+            if not config.can_process_images:
                 return None
             print("Found image attachment")
             # just incldue the image url

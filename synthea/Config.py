@@ -30,10 +30,17 @@ class Config:
         self.use_tools: bool = bool(loaded_file["use_tools"])
 
         # main model parameters
-        self.can_process_images: bool = bool(loaded_file["can_process_images"])
         self.api_key: str = loaded_file["api_key"]
         self.api_base_url: str = loaded_file["api_base_url"]
         self.model_name: str = loaded_file["model_name"]
+        self.can_process_images: bool = bool(loaded_file["can_process_images"])
+        self.can_use_reasoning: bool = bool(loaded_file["can_use_reasoning"])
+
+        # prompt parameters
+        self.reasoning_system_prompt: str = loaded_file["reasoning_system_prompt"]
+        self.reasoning_start_tag: str = loaded_file["reasoning_start_tag"]
+        self.reasoning_end_tag: str = loaded_file["reasoning_end_tag"]
+        self.image_generation_system_prompt: str = loaded_file["image_generation_system_prompt"]
 
         # image 
         self.image_generation_api_base_url = loaded_file["image_generation_api_base_url"]

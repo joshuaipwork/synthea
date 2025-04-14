@@ -18,7 +18,6 @@ from synthea.CommandParser import ChatbotParser, ParsedArgs
 from synthea.Config import Config
 from synthea.ContextManager import ContextManager
 from synthea.ImageModel import ImageModel
-from synthea.VisionModel import VisionModel
 from synthea.LanguageModel import LanguageModel
 from synthea.Model import Model
 from synthea.dtos.GenerationResponse import GenerationResponse
@@ -71,7 +70,7 @@ class SyntheaClient(discord.Client):
         super().__init__(intents=intents)
 
         self.language_model: LanguageModel = LanguageModel()
-        self.vision_model: VisionModel = VisionModel()
+        self.image_model: ImageModel = ImageModel()
         self.config: Config = Config()
         self.char_db = CharactersDatabase()
 
@@ -245,8 +244,9 @@ class SyntheaClient(discord.Client):
 
         # read the history to find the current applicable command
         context_manager = ContextManager(self.user.id)
+        system_prompt: str = self._generate_system_prompt()
         chat_history, args = await context_manager.generate_chat_history_from_chat(
-            message_from_user, system_prompt=config.system_prompt
+            message_from_user, system_prompt=system_prompt
         )
 
         char_id: str = None
@@ -486,3 +486,13 @@ class SyntheaClient(discord.Client):
         
         CLIENT_LOGGER.info(f"Appending {len(files)} files to the message.")
         return files
+    
+    def _generate_system_prompt(self):
+        system_prompt: str = self.config.system_prompt 
+
+        if self.config.can_use_reasoning:
+            system_prompt = self.config.reasoning_system_prompt + "\n" + system_prompt
+        if self.config.can_process_images:
+            system_prompt += f"\n{self.config.image_generation_system_prompt}"
+
+        return system_prompt
