@@ -1,7 +1,8 @@
 
+import asyncio
 import json
 import re
-from typing import override
+from typing import Dict, override
 import aiohttp
 import openai
 from openai.types.chat.chat_completion import ChatCompletion
@@ -21,6 +22,7 @@ from ToolUtilities import (
     get_chat_template,
     validate_and_extract_tool_calls
 )
+from synthea.dtos.GenerationResponse import GenerationResponse
 
 TOOL_CALL_PATTERN = re.compile(r'<tool_call>(.*?)<\/tool_call>', re.DOTALL)
 
@@ -32,14 +34,13 @@ class LanguageModel(Model):
 
     def __init__(self):
         self.config: Config = Config()
-        self.image_model: VisionModel = VisionModel()
         self.openai: openai.AsyncOpenAI = openai.AsyncOpenAI(
             api_key=self.config.api_key,
             base_url=self.config.api_base_url
         )
 
     @override
-    async def queue_for_generation(self, chat_history: list[dict[str, dict[str, str]]]) -> str:
+    async def queue_for_generation(self, chat_history: list[dict[str, dict[str, str]]]) -> GenerationResponse:
         """
         Sends a prompt to the server for generation. When the server is available,
         it will take up the prompt and generate a response.
@@ -68,31 +69,9 @@ class LanguageModel(Model):
         while needs_call and generation_count < 5:
             prompt = template.render(messages=chat_history, add_generation_prompt=True)
 
-            # generate the response
-            headers = {"Authorization": f"Bearer {config.api_key}"}
+            data: dict[str, str] = None
+            data = await self.generate_with_llama(prompt)
 
-            # Define the request body
-            body = {
-                'prompt': prompt,
-                'stop': config.stop_words,
-                'cache_prompt': True,
-                'n_predict': config.max_new_tokens,
-            }
-
-            # Create an aiohttp session
-            async with aiohttp.ClientSession() as session:
-                # Make the POST request
-                async with session.post(config.api_base_url, json=body, headers=headers) as response:
-                    # Check if the request was successful
-                    if response.status == 200:
-                        # Parse the JSON response
-                        data = await response.json()
-                        inference_logger.info("Response data:", data)
-                    else:
-                        response_text: str = await response.text()
-                        inference_logger.error(f"Error: HTTP {response.status}")
-                        inference_logger.error(response_text)
-                        raise requests.exceptions.HTTPError(f"{response.status} Response from inference server: {response_text}")
             generation_count += 1
             # TODO: Create a type for this
             last_completion = data["content"]
@@ -135,8 +114,21 @@ class LanguageModel(Model):
                 # no tool call, so we can just quit out
                 needs_call = False
 
+        # parse the response into constituent parts if reasoning was present
+        generation_response: GenerationResponse = GenerationResponse()
+        if (last_completion.startswith("<think>")):
+            think_split = last_completion.split("</think>", 1)
+            if len(think_split) == 1:
+                generation_response.reasoning = think_split[0]
+                generation_response.final_output = "[The model didn't finish thinking within the time limit.]"
+            else:
+                generation_response.reasoning = think_split[0]
+                generation_response.final_output = think_split[1]
+        else:
+            generation_response.final_output = last_completion
+
         # return the final result
-        return last_completion
+        return generation_response
 
     async def execute_function_call(self, function_name: str, function_args: dict[str]):
         function_to_call = getattr(Tools, function_name, None)
@@ -154,30 +146,53 @@ class LanguageModel(Model):
         # load config again in case system prompts change
         config: Config = Config()
 
-        # strip out the content, since the server isn't set up for multimodal
-        # and combine it to a simple string 
-        for chat_message in chat_history:
-            text = ""
-            for content_part in chat_message["content"]:
-                if content_part["type"] == "text":
-                    text += content_part["text"]
-                if content_part["type"] == "image_url":
-                    caption: str = await self.image_model.get_caption_for_image(content_part["image_url"]["url"])
-                    text += f"\n\n```SYSTEM: An image was attached to this message. Here is a description of the image: {caption}```"
-            chat_message["content"] = text
+        if not config.can_process_images:
+            # strip out the content, if the server isn't set up for multimodal
+            # and combine it to a simple string 
+            for chat_message in chat_history:
+                text = ""
+                for content_part in chat_message["content"]:
+                    if content_part["type"] == "text":
+                        text += content_part["text"]
+                chat_message["content"] = text
 
         print(chat_history)
         chat_completion: ChatCompletion = await self.openai.chat.completions.create(
             messages=chat_history,
-            model="gpt-3.5-turbo",
+            model=config.model_name,
             max_tokens=config.max_new_tokens,
-            presence_penalty=config.presence_penalty,
-            frequency_penalty=config.frequency_penalty,
-            temperature=config.temperature,
-            seed=-1,
-            top_p=config.top_p,
             stop=config.stop_words
         )
         # TODO: Add error handling
 
         return chat_completion.choices[0].message.content
+    
+    async def generate_with_llama(self, prompt: str) -> Dict[str, str]:
+        config: Config = Config()
+
+        # generate the response
+        headers = {"Authorization": f"Bearer {config.api_key}"}
+
+        # Define the request body
+        body = {
+            'prompt': prompt,
+            'stop': config.stop_words,
+            'cache_prompt': True,
+            'n_predict': config.max_new_tokens,
+        }
+
+        # Create an aiohttp session
+        async with aiohttp.ClientSession() as session:
+            # Make the POST request
+            async with session.post(config.api_base_url, json=body, headers=headers) as response:
+                # Check if the request was successful
+                if response.status == 200:
+                    # Parse the JSON response
+                    data = await response.json()
+                    inference_logger.info("Response data:", data)
+                else:
+                    response_text: str = await response.text()
+                    inference_logger.error(f"Error: HTTP {response.status}")
+                    inference_logger.error(response_text)
+                    raise requests.exceptions.HTTPError(f"{response.status} Response from inference server: {response_text}")
+        return data
