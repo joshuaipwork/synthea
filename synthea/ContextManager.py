@@ -14,7 +14,6 @@ from synthea.CharactersDatabase import CharactersDatabase
 from synthea.CommandParser import ChatbotParser, CommandError, ParsedArgs, ParserExitedException
 from synthea import SyntheaClient
 from synthea.Config import Config
-from synthea.VisionModel import VisionModel
 from synthea.LanguageModel import LanguageModel
 
 class ReplyChainIterator:
@@ -59,6 +58,7 @@ class ContextManager:
 
     # A rough measure of how many character are in each token.
     EST_CHARS_PER_TOKEN: int = 3
+    REASONING_TXT_FILE_NAME: str = 'bot_thinking.txt'
 
     def __init__(self, bot_user_id: int):
         """
@@ -68,7 +68,6 @@ class ContextManager:
             the bot or from a user.
         """
         self.parser: ChatbotParser = ChatbotParser()
-        self.image_model: VisionModel = VisionModel()
         self.language_model: LanguageModel = LanguageModel()
         self.characters_database: CharactersDatabase = CharactersDatabase()
         self.bot_user_id: int = bot_user_id
@@ -197,7 +196,6 @@ class ContextManager:
             token_count += added_tokens
 
         # add the system prompt
-
         if not system_prompt:
             system_prompt = default_system_prompt
         if config.use_tools:
@@ -227,7 +225,10 @@ class ContextManager:
         attachment_bytes = await attachment.read()
         if not attachment.content_type or attachment.content_type.startswith("text/"):
             openai_content_type = "text"
-            attachment_string = attachment_bytes.decode()
+            if (attachment.filename != ContextManager.REASONING_TXT_FILE_NAME):
+                attachment_string = attachment_bytes.decode()
+            else:
+                print("Skipping txt file because it contains bot reasoning.")
         elif "application/pdf" in attachment.content_type:
             print("Saving the pdf attachment")
             openai_content_type = "text"
@@ -311,11 +312,11 @@ class ContextManager:
         # inject the character's name if they are a character
         if message.author.id == self.bot_user_id and message.embeds and message.embeds[0].footer.text:
             char_data: dict[str, str] = self.characters_database.load_character(message.embeds[0].footer.text)                
-            content.insert(0, {"type": "text", "text": f"{char_data["display_name"]}: "})
+            content.insert(0, {"type": "text", "text": f"[{char_data["display_name"]}: "})
         # inject You if no character is specified
         elif message.author.id == self.bot_user_id:
             content.insert(0, {"type": "text", "text": f"You: "})
             # TODO: Figure out how to square this with -sp
         # if another user inject the user's name into the prompt so the bot knows it
         else:
-            content.insert(0, {"type": "text", "text": f"{message.author.display_name}: "})
+            content.insert(0, {"type": "text", "text": f"[{message.author.display_name}]: "})

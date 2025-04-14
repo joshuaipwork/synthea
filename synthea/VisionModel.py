@@ -1,5 +1,4 @@
 from typing import override
-import discord
 from openai import AsyncOpenAI
 from openai.types.chat.chat_completion import ChatCompletion
 

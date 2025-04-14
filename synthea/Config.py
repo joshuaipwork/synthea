@@ -15,7 +15,6 @@ class Config:
         self.max_new_tokens: int = loaded_file["max_new_tokens"]
         self.command_start_str: str = loaded_file["command_start_str"]
         self.system_prompt: str = loaded_file["system_prompt"]
-        self.default_model: str = loaded_file["default_model"]
         self.bot_name: str = loaded_file["bot_name"]
         self.chat_template: str = loaded_file["chat_template"]
 
@@ -30,12 +29,12 @@ class Config:
         self.tool_prompt: str = loaded_file["tool_prompt"]
         self.use_tools: bool = bool(loaded_file["use_tools"])
 
-        # server parameters
+        # main model parameters
+        self.can_process_images: bool = bool(loaded_file["can_process_images"])
         self.api_key: str = loaded_file["api_key"]
         self.api_base_url: str = loaded_file["api_base_url"]
+        self.model_name: str = loaded_file["model_name"]
 
-        self.image_api_key: str = loaded_file["image_api_key"]
-        self.image_api_base_url: str = loaded_file["image_api_base_url"]
-        self.image_system_prompt: str = loaded_file["image_system_prompt"]
-        self.image_question_prompt: str = loaded_file["image_question_prompt"]
-        self.image_processing_enabled: bool = loaded_file["image_processing_enabled"]
+        # image 
+        self.image_generation_api_base_url = loaded_file["image_generation_api_base_url"]
+        self.image_generation_workflow_name = loaded_file["image_generation_workflow_name"]

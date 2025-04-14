@@ -1,31 +1,27 @@
 """
 The discord client which contains the bulk of the logic for the chatbot.
 """
-from datetime import datetime, time
+from datetime import datetime
+from io import BytesIO
 import logging
-import math
-import multiprocessing
-import random
 import re
 import traceback
 from typing import Optional
 import discord
 from discord import app_commands
-import openai
 import yaml
 import asyncio
-from synthea import SyntheaUtilities
 
 from synthea.CharactersDatabase import CharactersDatabase
 
 from synthea.CommandParser import ChatbotParser, ParsedArgs
 from synthea.Config import Config
 from synthea.ContextManager import ContextManager
+from synthea.ImageModel import ImageModel
 from synthea.VisionModel import VisionModel
 from synthea.LanguageModel import LanguageModel
 from synthea.Model import Model
-from synthea.dtos.GenerationRequest import GenerationRequest
-from synthea.dtos.ResponseUpdate import ResponseUpdate
+from synthea.dtos.GenerationResponse import GenerationResponse
 from synthea.character_errors import (
     CharacterNotFoundError,
     CharacterNotOnServerError,
@@ -75,7 +71,7 @@ class SyntheaClient(discord.Client):
         super().__init__(intents=intents)
 
         self.language_model: LanguageModel = LanguageModel()
-        self.image_model: VisionModel = VisionModel()
+        self.vision_model: VisionModel = VisionModel()
         self.config: Config = Config()
         self.char_db = CharactersDatabase()
 
@@ -87,7 +83,8 @@ class SyntheaClient(discord.Client):
     def measure_time(func):
         async def async_wrapper(*args, **kwargs):
             start_time = datetime.now()
-            result = await func(*args, **kwargs)
+            async with asyncio.timeout(None):
+                result = await func(*args, **kwargs)
             end_time = datetime.now()
             execution_time = (end_time - start_time).total_seconds()
             CLIENT_LOGGER.info(f"Async function {func.__name__} took {execution_time:.4f} seconds to finish.")
@@ -199,7 +196,8 @@ class SyntheaClient(discord.Client):
         try:
             # await message.add_reaction("🛑")
             await message.add_reaction("⏳")
-            await self.respond_to_user(message)
+            async with asyncio.timeout(7200):
+                await self.respond_to_user(message)
             await message.add_reaction("✅")
 
         # if error, let the user know what went wrong
@@ -232,6 +230,18 @@ class SyntheaClient(discord.Client):
         if args.use_as_system_prompt:
             await self.send_response_as_system("Conversation started...", message_from_user)
             return
+        
+        # if the user just wants to create an image, just create an image and
+        # ignore the LLM
+        if args.use_image_model:
+            response: GenerationResponse = GenerationResponse()
+            response.final_output = args.prompt
+            generated_images = await self.image_model.get_images_from_prompt(args.prompt)
+            for node_id in generated_images:
+                for image_data in generated_images[node_id]:
+                    response.images.append(image_data)
+            await self.send_response_as_base(response, message_from_user)
+            return
 
         # read the history to find the current applicable command
         context_manager = ContextManager(self.user.id)
@@ -241,11 +251,6 @@ class SyntheaClient(discord.Client):
 
         char_id: str = None
         model: Model = self.language_model
-        if args:
-            if args.use_image_model:
-                CLIENT_LOGGER.info("Using image model")
-                model = self.image_model
-            char_id = args.character
 
         # if the user responded to the bot playing a character, respond as that character
         replied_char_id = await self._get_character_replied_to(message_from_user)
@@ -276,8 +281,18 @@ class SyntheaClient(discord.Client):
                 message_from_user, system_prompt=system_prompt
             )
 
-        response = await model.queue_for_generation(chat_history)
-        response = self._preprocess_response(response)
+        response: GenerationResponse = await model.queue_for_chat_generation(chat_history)
+        response.final_output = self._preprocess_final_output(response.final_output)
+        
+        # check for image generation tags, and generate an image if so
+        if ("<image>" in response.final_output and "</image>" in response.final_output):
+            image_prompt: str = re.search(r'<image>(.*?)</image>', response.final_output, re.DOTALL).group(1)
+            generated_images = await self.image_model.get_images_from_prompt(image_prompt)
+            response.final_output = re.sub(r'<image>.*?</image>', '', response.final_output, flags=re.DOTALL)
+            for node_id in generated_images:
+                for image_data in generated_images[node_id]:
+                    response.images.append(image_data)
+            response.reasoning += f"\nIMAGE PROMPT: {image_prompt}"
 
         if char_id and char_id != SYSTEM_TAG:
             CLIENT_LOGGER.info(f"Responded to {message_from_user.author} with char {char_id}")
@@ -285,45 +300,46 @@ class SyntheaClient(discord.Client):
             await self.send_response_as_character(response, char_data, message_from_user)
         else:
             CLIENT_LOGGER.info(f"Responded to {message_from_user.author}")
-            CLIENT_LOGGER.info(response)
+            CLIENT_LOGGER.info(response.final_output)
             await self.send_response_as_base(response, message_from_user)
 
-    def _preprocess_response(self, response: str) -> str:
+    def _preprocess_final_output(self, final_output: str) -> str:
         """
         Does some simple preprocessing to improve the quality of responses
         """
-        if response.lower().startswith(f"Message from {self.config.bot_name}".lower()):
-            response = response[len(f"Message from {self.config.bot_name}"):]
-        if response.lower().startswith(f"Message from Syn".lower()):
-            response = response[len(f"Message from Syn"):]
+        final_output = re.sub(r'Message from \".*?\":\n', '', final_output)
+        if final_output.lower().startswith(f"Message from {self.config.bot_name}".lower()):
+            final_output = final_output[len(f"Message from {self.config.bot_name}"):]
+        if final_output.lower().startswith(f"Message from Syn".lower()):
+            final_output = final_output[len(f"Message from Syn"):]
 
         # remove roleplay chat tags
         # This regex now uses a capture group to match the rest of the line
-        match = re.match(CHAT_TAG_PATTERN, response, flags=re.DOTALL)
+        match = re.match(CHAT_TAG_PATTERN, final_output, flags=re.DOTALL)
         if match:
             # If there's a match, return the captured group (rest of the line)
-            response = match.group(1)
-        if response.lower().startswith("Syn:".lower()):
-            response = response[len("Syn:"):]
-        if len(response) > DISCORD_EMBED_LIMIT:
-            response = response[:DISCORD_EMBED_LIMIT]
+            final_output = match.group(1)
+        if final_output.lower().startswith("Syn:".lower()):
+            final_output = final_output[len("Syn:"):]
+        if len(final_output) > DISCORD_EMBED_LIMIT:
+            final_output = final_output[:DISCORD_EMBED_LIMIT]
 
         # remove stop words at end
         for stop_word in self.config.stop_words:
-            if response.endswith(stop_word):
-                response = response[:len(response)-len(stop_word)]
-        return response
+            if final_output.endswith(stop_word):
+                final_output = final_output[:len(final_output)-len(stop_word)]
+        return final_output
 
-    async def send_response_as_base(self, response: str, message: discord.Message):
+    async def send_response_as_base(self, response: GenerationResponse, message: discord.Message):
         """
         Sends a simple response using the base template of the model.
         """
         # create an embed to extend the character count
         embed: discord.Embed = discord.Embed(
-            description=response,
+            description=response.final_output
         )
 
-        await self.send_response(response_text=response, embed=embed, message_to_reply=message)
+        await self.send_response(embed=embed, message_to_reply=message, files=self.convert_generation_response_to_files(response))
 
     async def send_response_as_system(self, response: str, message: discord.Message):
         """
@@ -335,10 +351,10 @@ class SyntheaClient(discord.Client):
             description=response,
         )
         embed.set_footer(text=SYSTEM_TAG)
-        await self.send_response(response_text=response, embed=embed, message_to_reply=message, add_buttons=False)
+        await self.send_response(embed=embed, message_to_reply=message, add_buttons=False)
 
     async def send_response_as_character(
-        self, response: str, char_data: dict[str, str], message: discord.Message
+        self, response: GenerationResponse, char_data: dict[str, str], message: discord.Message
     ):
         """
         Sends the given response in the same channel as the given message while
@@ -358,7 +374,7 @@ class SyntheaClient(discord.Client):
 
         embed: discord.Embed = discord.Embed(
             title=char_name,
-            description=response,
+            description=response.final_output,
         )
 
         # add a picture via url
@@ -370,18 +386,17 @@ class SyntheaClient(discord.Client):
 
         # send the message with embed
         await self.send_response(
-            response_text=response,
             embed=embed,
             message_to_reply=message,
+            files=self.convert_generation_response_to_files(response)
         )
 
     async def send_response(
         self,
         message_to_reply: discord.Message = None,
-        response_text: Optional[str] = None,
         embed: Optional[discord.Embed] = None,
         add_buttons: bool = True,
-        _file: Optional[discord.Embed] = None,
+        files: Optional[list[discord.File]] = None,
     ):
         """
         Sends a response, splitting it up into multiple messages if required
@@ -399,13 +414,15 @@ class SyntheaClient(discord.Client):
         # split up the response into messages and send them individually
         # print(f"Response ({len(response_text)} chars):\n{response_text}")
 
-        if not embed and not response_text:
+        if not embed:
             # TODO: Decide if sending a default response or raising an error is better.
             # For now, ominous default response because it's funny
-            response_text = "..."
+            embed = discord.Embed(
+                description="...",
+            )
             # raise ValueError("No embed or response text included in the response.")
 
-        bot_message: discord.Message = await message_to_reply.reply(mention_author=True, embed=embed)
+        bot_message: discord.Message = await message_to_reply.reply(mention_author=True, embed=embed, files=files)
 
         # add controls
         if add_buttons:
@@ -448,3 +465,24 @@ class SyntheaClient(discord.Client):
             print(exc)
 
         return None
+
+    def convert_generation_response_to_files(self, response: GenerationResponse) -> list[discord.File]: 
+        """
+        Converts a generation response to a set of files to embed with the
+        discord message.
+        """
+        files: list[discord.File] = []
+        if (response.reasoning):
+            CLIENT_LOGGER.info(f"Appending reasoning file to the message.")
+            buffer = BytesIO(response.reasoning.encode())
+            reasoning_file: discord.File = discord.File(buffer, filename=ContextManager.REASONING_TXT_FILE_NAME)
+            files.append(reasoning_file)
+
+        if (response.images):
+            CLIENT_LOGGER.info(f"Appending {len(response.images)} images to the message.")
+            for index, image in enumerate(response.images):
+                buffer = BytesIO(image)
+                files.append(discord.File(buffer, filename=f"image_{index}.png"))
+        
+        CLIENT_LOGGER.info(f"Appending {len(files)} files to the message.")
+        return files

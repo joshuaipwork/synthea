@@ -71,7 +71,7 @@ class ChatbotParser:
             action="store_true",
             default=None,
             dest="use_image_model",
-            help="Use the image model to generate the response.",
+            help="Generates an image instead of contacting the LLM.",
         )
         self.parser.add_argument(
             "-sp",
