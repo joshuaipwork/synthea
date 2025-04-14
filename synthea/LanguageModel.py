@@ -9,7 +9,6 @@ from openai.types.chat.chat_completion import ChatCompletion
 from openai.types.completion import Completion
 import requests
 
-from synthea.VisionModel import VisionModel
 from synthea.Config import Config
 from synthea.Model import Model
 
@@ -116,8 +115,8 @@ class LanguageModel(Model):
 
         # parse the response into constituent parts if reasoning was present
         generation_response: GenerationResponse = GenerationResponse()
-        if (last_completion.startswith("<think>")):
-            think_split = last_completion.split("</think>", 1)
+        if (last_completion.startswith(config.reasoning_start_tag)):
+            think_split = last_completion.split(config.reasoning_end_tag, 1)
             if len(think_split) == 1:
                 generation_response.reasoning = think_split[0]
                 generation_response.final_output = "[The model didn't finish thinking within the time limit.]"
@@ -138,9 +137,9 @@ class LanguageModel(Model):
         return results_dict
 
     @override
-    async def queue_for_chat_generation(self, chat_history: list[dict[str, dict[str, str]]]) -> str:
+    async def queue_for_chat_generation(self, chat_history: list[dict[str, dict[str, str]]]) -> GenerationResponse:
         """
-        Sends a prompt to the server for generation. When the server is available,
+        Sends a prompt to the server for generation with the openAI chat API. When the server is available,
         it will take up the prompt and generate a response.
         """
         # load config again in case system prompts change
@@ -165,7 +164,23 @@ class LanguageModel(Model):
         )
         # TODO: Add error handling
 
-        return chat_completion.choices[0].message.content
+        print(chat_completion)
+
+        # parse the response into constituent parts if reasoning was present
+        generation_response: GenerationResponse = GenerationResponse()
+        if (chat_completion.choices[0].message.content.startswith(config.reasoning_start_tag)):
+            think_split = chat_completion.choices[0].message.content.split(config.reasoning_end_tag, 1)
+            if len(think_split) == 1:
+                generation_response.reasoning = think_split[0]
+                generation_response.final_output = "[The model didn't finish thinking within the time limit.]"
+            else:
+                generation_response.reasoning = think_split[0]
+                generation_response.final_output = think_split[1]
+        else:
+            generation_response.final_output = chat_completion.choices[0].message.content
+
+        # return the final result
+        return generation_response
     
     async def generate_with_llama(self, prompt: str) -> Dict[str, str]:
         config: Config = Config()
