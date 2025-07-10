@@ -43,11 +43,12 @@ class CommandParser(argparse.ArgumentParser):
 
 
 class ParsedArgs:
-    def __init__(self, character=None, use_as_system_prompt=False, use_image_model=False, prompt=None):
+    def __init__(self, character=None, use_as_system_prompt=False, use_image_model=False, dry_run=False, prompt=None):
         self.character = character
         self.use_as_system_prompt: bool = use_as_system_prompt
         self.use_image_model: bool = use_image_model
         self.prompt: str = prompt
+        self.dry_run: bool = dry_run
 
 class ChatbotParser:
     def __init__(self):
@@ -81,6 +82,15 @@ class ChatbotParser:
             default=None,
             dest="use_as_system_prompt",
             help="Save the prompt text as the system prompt for the remainder of the reply chain.",
+        )
+        self.parser.add_argument(
+            "-d",
+            "-dry",
+            "--dry-run",
+            action="store_true",
+            default=None,
+            dest="dry_run",
+            help="Return the final prompt, rather than the bot's response.",
         )
         self.parser.add_argument(
             "prompt", nargs=argparse.REMAINDER, help="The prompt to give the bot."

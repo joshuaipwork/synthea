@@ -40,6 +40,8 @@ class Config:
         self.reasoning_system_prompt: str = loaded_file["reasoning_system_prompt"]
         self.reasoning_start_tag: str = loaded_file["reasoning_start_tag"]
         self.reasoning_end_tag: str = loaded_file["reasoning_end_tag"]
+
+        self.image_generation_enabled: str = loaded_file["image_generation_enabled"]
         self.image_generation_system_prompt: str = loaded_file["image_generation_system_prompt"]
 
         # image 
