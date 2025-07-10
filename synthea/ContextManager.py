@@ -3,11 +3,15 @@
 Generate a prompt for the AI to respond to, given the
 message history and persona.
 """
+import base64
+import mimetypes
 from typing import AsyncIterator, Optional
+from urllib.parse import urlparse
 import discord
 import pypdf
 from jinja2 import Environment
 import os
+import requests
 import yaml
 
 from synthea.CharactersDatabase import CharactersDatabase
@@ -16,6 +20,13 @@ from synthea import SyntheaClient
 from synthea.Config import Config
 from synthea.LanguageModel import LanguageModel
 
+
+from ToolUtilities import (
+    inference_logger,
+    get_assistant_message,
+    get_chat_template,
+    validate_and_extract_tool_calls
+)
 class ReplyChainIterator:
     """
     An async iterator which follows a chain of discord message replies until it reaches the end
@@ -142,13 +153,12 @@ class ContextManager:
         """
         config = Config()
 
-        # pieces of the prompts are appended to the list then assembled in reverse order into the final prompt
+        # using openAI chat schemas
+        # each message will be parsed, then added to a list of messages from oldest to newest
         token_count: int = 0
         last_command_args: ParsedArgs | None = None
         system_prompt = None
-
-        # use provided system prompt
-        messages = []
+        chat_messages = []
 
         # retrieve as many tokens as can fit into the context length from history
         history_token_limit: int = config.context_length - config.max_new_tokens
@@ -157,8 +167,12 @@ class ContextManager:
         async for message in history_iterator:
             # some messages in the chain may be commands for the bot
             # if so, parse only the prompt in each command in order to not confuse the bot
-            content, added_tokens = await self._get_content(message, history_token_limit - token_count, config)
-            text: str = self._extract_text_from_content(content)
+            raw_content, added_tokens = await self._get_content(message, history_token_limit - token_count, config)
+
+            # merge all the text in the message and track the number of tokens
+            text: str = self._extract_text_from_content(raw_content)
+
+            # if the message is a command, parse it
             if text.lower().startswith(config.command_start_str.lower()):
                 message_args: ParsedArgs = self.parser.parse(text)
                 if not last_command_args:
@@ -168,30 +182,38 @@ class ContextManager:
                     # if the command sets the system prompt, don't include it in the history
                     continue
                 # clean the command to only include the prompt parameter
-                # TODO: support including images in these commands
-                content = [{"type": "text", "text": f"{message_args.prompt}"}]
+                text = message_args.prompt
                 added_tokens = len(message_args.prompt) // self.EST_CHARS_PER_TOKEN
+
+            # add the username
+            self._inject_username(message, text)
 
             # skip messages that were created by the system
             if message.author.id == self.bot_user_id and message.embeds and message.embeds[0].footer.text == SyntheaClient.SYSTEM_TAG:
                 continue
 
             # don't include empty messages so the bot doesn't get confused.
-            if not content:
+            if not raw_content:
                 continue
 
             # stop retrieving context if the context would overflow
             if added_tokens + token_count > history_token_limit:
                 break
 
-            # add the username
-            self._inject_username(message, content)
+            # convert the text and any other content in the field to a 
+            content = []
+            if text:
+                content.append({"type": "text", "text": text})
+            for entry in raw_content:
+                if entry.get("type") == "text":
+                    continue
+                content.append({"type": entry.get("type"), entry.get("type"): entry.get(entry.get("type"))})
 
-            # update the prompt with this message
+            # update the list of messages with this message
             if message.author.id == self.bot_user_id:
-                messages.insert(0, {"role": "assistant", "content": content})
+                chat_messages.insert(0, {"role": "assistant", "content": content})
             else:
-                messages.insert(0, {"role": "user", "content": content})
+                chat_messages.insert(0, {"role": "user", "content": content})
             
             token_count += added_tokens
 
@@ -200,11 +222,11 @@ class ContextManager:
             system_prompt = default_system_prompt
         if config.use_tools:
             system_prompt += f"\n{config.tool_prompt}"
-        messages.insert(0, {"role": "system", "content": [
+        chat_messages.insert(0, {"role": "system", "content": [
                     {"type": "text", "text": (system_prompt if system_prompt else default_system_prompt)}
                     ]})
 
-        return messages, last_command_args
+        return chat_messages, last_command_args
     
     async def _read_attachment(self, attachment: discord.Attachment) -> tuple[str, str] | None:
         """
@@ -244,6 +266,7 @@ class ContextManager:
             os.remove(attachment.filename)
         elif attachment.content_type.startswith("image/"):
             if not config.can_process_images:
+                inference_logger.info("Skipped processing attached image since the model cannot process images.")
                 return None
             print("Found image attachment")
             # just incldue the image url
@@ -286,7 +309,7 @@ class ContextManager:
                 content = {"type": "text", "text": "\n\nSYSTEM: A file was attached to this message, but it is either empty or is not a file type you can read."}
                 tokens += len(content["text"]) // self.EST_CHARS_PER_TOKEN
             elif openai_content_type == "image_url":
-                content = {"type": "image_url", "image_url": {"url": attachment_content}}
+                content = {"type": "image_url", "image_url": self.image_to_base64(attachment_content)}
                 # TODO: calculate the number of tokens associated with image
             elif (len(attachment_content) // self.EST_CHARS_PER_TOKEN) > remaining_tokens:
                 content = {"type": "text", "text": "\n\nSYSTEM: A file was attached to this message, but it was too large to be read."}
@@ -305,18 +328,47 @@ class ContextManager:
                 text += entry["text"]
         return text
 
-    def _inject_username(self, message: discord.Message, content: list[dict[str, str]]):
+    def _inject_username(self, message: discord.Message, text: str):
         """
-        Adds text that says "Message from [User]" to a content list
+        Updates text to include the username of the person sending the message
         """
         # inject the character's name if they are a character
         if message.author.id == self.bot_user_id and message.embeds and message.embeds[0].footer.text:
             char_data: dict[str, str] = self.characters_database.load_character(message.embeds[0].footer.text)                
-            content.insert(0, {"type": "text", "text": f"[{char_data["display_name"]}: "})
+            text = f"[{char_data["display_name"]}]: " + text
         # inject You if no character is specified
         elif message.author.id == self.bot_user_id:
-            content.insert(0, {"type": "text", "text": f"You: "})
+            text = f"[You]: " + text
             # TODO: Figure out how to square this with -sp
         # if another user inject the user's name into the prompt so the bot knows it
         else:
-            content.insert(0, {"type": "text", "text": f"[{message.author.display_name}]: "})
+            text = f"[{message.author.display_name}]: " + text
+
+    def image_to_base64(self, image_path):
+        """
+        Downloads an image and converts into base 64 with a mimetype declaration.
+        """
+        # Check if the path is a URL
+        is_url = urlparse(image_path).scheme in ['http', 'https']
+        
+        # Get the content and mime type
+        if is_url:
+            response = requests.get(image_path)
+            image_content = response.content
+            # Try to get mime type from response headers first
+            mime_type = response.headers.get('content-type')
+            if not mime_type:
+                # Fallback to guessing from URL
+                mime_type = mimetypes.guess_type(image_path)[0]
+        else:
+            with open(image_path, 'rb') as img_file:
+                image_content = img_file.read()
+            mime_type = mimetypes.guess_type(image_path)[0]
+        
+        # If mime type still couldn't be determined, default to jpeg
+        if mime_type is None:
+            mime_type = 'image/jpeg'
+        
+        # Convert to base64
+        b64_string = base64.b64encode(image_content).decode('utf-8')
+        return f'data:{mime_type};base64,{b64_string}'

@@ -249,7 +249,7 @@ class SyntheaClient(discord.Client):
             message_from_user, system_prompt=system_prompt
         )
 
-        char_id: str = None
+        char_id: str = args.character
         model: Model = self.language_model
 
         # if the user responded to the bot playing a character, respond as that character
@@ -280,6 +280,12 @@ class SyntheaClient(discord.Client):
             chat_history, _ = await context_manager.generate_chat_history_from_chat(
                 message_from_user, system_prompt=system_prompt
             )
+
+        if (args.dry_run):
+            buffer = BytesIO(self.format_chat_messages(chat_history).encode())
+            dry_run_file: discord.File = discord.File(buffer, filename=ContextManager.REASONING_TXT_FILE_NAME)
+            await self.send_response(message_to_reply=message_from_user, files=[dry_run_file])
+            return
 
         response: GenerationResponse = await model.queue_for_chat_generation(chat_history)
         response.final_output = self._preprocess_final_output(response.final_output)
@@ -335,9 +341,11 @@ class SyntheaClient(discord.Client):
         Sends a simple response using the base template of the model.
         """
         # create an embed to extend the character count
-        embed: discord.Embed = discord.Embed(
-            description=response.final_output
-        )
+        embed = None
+        if response.final_output:
+            embed: discord.Embed = discord.Embed(
+                description=response.final_output
+            )
 
         await self.send_response(embed=embed, message_to_reply=message, files=self.convert_generation_response_to_files(response))
 
@@ -347,9 +355,11 @@ class SyntheaClient(discord.Client):
         are ignored for chat history purposes.
         """
         # create an embed to extend the character count
-        embed: discord.Embed = discord.Embed(
-            description=response,
-        )
+        embed = None
+        if response:
+            embed: discord.Embed = discord.Embed(
+                description=response,
+            )
         embed.set_footer(text=SYSTEM_TAG)
         await self.send_response(embed=embed, message_to_reply=message, add_buttons=False)
 
@@ -414,7 +424,7 @@ class SyntheaClient(discord.Client):
         # split up the response into messages and send them individually
         # print(f"Response ({len(response_text)} chars):\n{response_text}")
 
-        if not embed:
+        if not embed and not files:
             # TODO: Decide if sending a default response or raising an error is better.
             # For now, ominous default response because it's funny
             embed = discord.Embed(
@@ -491,8 +501,31 @@ class SyntheaClient(discord.Client):
         system_prompt: str = self.config.system_prompt 
 
         if self.config.can_use_reasoning:
-            system_prompt = self.config.reasoning_system_prompt + "\n" + system_prompt
-        if self.config.can_process_images:
-            system_prompt += f"\n{self.config.image_generation_system_prompt}"
+            system_prompt += f"{self.config.reasoning_system_prompt}\n"
+        if self.config.image_generation_enabled:
+            system_prompt += f"{self.config.image_generation_system_prompt}\n"
 
         return system_prompt
+    
+    def format_chat_messages(self, messages):
+        """
+        Formats chat messages for easy reading and review.
+        """
+        output = []
+        for msg in messages:
+            role = msg['role'].upper()
+            content = msg['content']
+            content_string = ""
+            for content_component in content:
+                if content_component['type'] == 'text':
+                    content_string += content_component['text']
+                else:
+                    content_string += f"\n\n Content of type {content_component['type']} is attached here."
+            output.extend([
+                f"=== {role} ===",
+                content_string,
+                "\n"
+            ])
+        if output:
+            return "\n".join(output)
+        return ""
