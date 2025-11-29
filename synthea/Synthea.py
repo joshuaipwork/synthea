@@ -3,11 +3,15 @@ The starting point for the program
 """
 
 import multiprocessing
+from typing import List
 import discord
 from discord import app_commands
+import openai
 import yaml
 import asyncio
 
+from synthea.Config import Config
+from synthea.ModelDefinition import ModelDefinition
 from synthea.SyntheaClient import SyntheaClient
 from synthea.dtos.ResponseUpdate import ResponseUpdate
 from synthea.modals.CharCreationView import CharCreationView
@@ -18,7 +22,7 @@ from synthea.character_errors import (
     ForbiddenCharacterError,
 )
 
-def format_list(char_list: list[dict[str, str]]) -> str:
+def format_char_list(char_list: list[dict[str, str]]) -> str:
     """Generates a formatted text version of a list of characters and descriptions"""
     output = ""
     # I'd love to make a table, but discord doesn't support it. Markdown lists are the best I have
@@ -30,6 +34,24 @@ def format_list(char_list: list[dict[str, str]]) -> str:
             output += f'\n> {char["description"]}'
     return output
 
+def format_model_list(model_list: list[openai.types.model.Model]) -> str:
+    """Generates a formatted text version of a list of characters and descriptions"""
+    output = ""
+
+    config: Config = Config()
+    # I'd love to make a table, but discord doesn't support it. Markdown lists are the best I have
+    for model in model_list:
+        if model.id not in config.models:
+            continue
+        model_definition: ModelDefinition = config.models[model.id]
+        output += f'\n{model.id}   '
+        if model_definition.vision:
+            output += f' 👀'
+        if model_definition.reasoning:
+            output += f' 🤔'
+        if model_definition.description:
+            output += f'\n> {model_definition.description}'
+    return output
 
 if __name__ == "__main__":
     with open("config.yaml", "r", encoding="utf-8") as file:
@@ -165,7 +187,7 @@ if __name__ == "__main__":
                 "There are no public characters on this server.", ephemeral=True
             )
         else:
-            await interaction.response.send_message(format_list(char_list), ephemeral=True)
+            await interaction.response.send_message(format_char_list(char_list), ephemeral=True)
 
 
     @tree.command(
@@ -180,6 +202,15 @@ if __name__ == "__main__":
                 "You don't own any characters.", ephemeral=True
             )
         else:
-            await interaction.response.send_message(format_list(char_list), ephemeral=True)
+            await interaction.response.send_message(format_char_list(char_list), ephemeral=True)
+
+    @tree.command(
+        name="list_models",
+        description="Show a list of available models",
+    )
+    async def send_models_list(interaction: discord.Interaction):
+        """Sends a list of available models to the interacter"""
+        model_list: List[openai.types.model.Model] = await client.get_models()
+        await interaction.response.send_message(format_model_list(model_list), ephemeral=True)
 
     client.run(token)

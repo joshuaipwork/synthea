@@ -1,4 +1,6 @@
 import argparse
+from dataclasses import dataclass
+import re
 from typing import IO, NoReturn
 import yaml
 
@@ -16,13 +18,62 @@ class ParserExitedException(Exception):
     Indicates that argparse would have exited if this were a command line command
     rather than a discord bot command
     """
-
+    def __init__(self, msg: str):
+        self.message = msg
 
 class CommandParser(argparse.ArgumentParser):
     """
     A wrapper over argparse to make it better suited for parsing discord
     bot commands.
     """
+    def parse_args(self, args=None, namespace=None):
+        parsed_args: ParsedArgs = super().parse_args(args, namespace)
+        if parsed_args.help:
+            # We want to show different help based on whether other flags are present
+            if parsed_args.use_image_model:  # If -im was provided (even without a value, it might be set to the default or True)
+                raise ParserExitedException(f'''
+                    ```usage: !syn -im [-h] [-dim "[width]x[height]"] prompt
+
+                    This bot is an interface for using AI models. 
+                    When used with the -im option, it generates an image instead of
+                    sending a prompt to a language model
+
+                    positional arguments:
+                    prompt                The prompt to use with the image model.
+
+                    options:
+                    -h, --help            show this help message and exit
+                    -d, -dim, --dimensions 
+                                            Create an image with these dimensions.
+                                            Use the form [width]x[height],
+                                            for example 1024x1024.
+                    ```''')
+            else:
+                raise ParserExitedException(f'''
+                    ```usage: !syn [-h] [-c CHARACTER] [-im] [-sp] [-d] [-m MODEL] prompt
+
+                    This bot is an interface for using AI models. 
+
+                    positional arguments:
+                    prompt                The prompt to give the bot.
+
+                    options:
+                    -h, --help            show this help message and exit
+                    -c CHARACTER, -char CHARACTER, --character CHARACTER
+                                            The character for the bot to assume in its response.
+                    -im, --use-image-model
+                                            Generates an image instead of contacting the LLM.
+                                            For more information, use -im -h to get image-specific options.
+                    -sp, -system-prompt, --use-as-system-prompt
+                                            Save the prompt text as the system prompt
+                                            for the remainder of the reply chain.
+                    -dry, --dry-run
+                                            If passed, return the final prompt,
+                                            rather than the bot's response.
+                    -m MODEL, -model MODEL, --model MODEL
+                                            The language model to use.
+                    ```''')
+        return parsed_args
 
     def error(self, message):
         """
@@ -36,27 +87,46 @@ class CommandParser(argparse.ArgumentParser):
         Some actions, like asking for help or encountering an error, will exit the program after running
         This makes it so that it raises an exception instead so the bot can return that to the user.
         """
-        raise ParserExitedException(self.format_help())
+        raise ParserExitedException(f'```{self.format_help()}```')
 
     def print_help(self, file: IO[str] | None = None) -> None:
         """Overriden to prevent console spam"""
 
-
+@dataclass
 class ParsedArgs:
-    def __init__(self, character=None, use_as_system_prompt=False, use_image_model=False, dry_run=False, prompt=None):
-        self.character = character
-        self.use_as_system_prompt: bool = use_as_system_prompt
-        self.use_image_model: bool = use_image_model
-        self.prompt: str = prompt
-        self.dry_run: bool = dry_run
+    character: str = None
+    use_as_system_prompt: bool = False
+    use_image_model: bool = False
+    prompt: str = None
+    dry_run: bool = False
+    model: str = None
+    dimensions: str = None
+    help: bool = False
 
 class ChatbotParser:
+    def image_dimensions(self, value: str) -> str:
+        """Validate and parse dimensions in the form '[width]x[length]'."""
+        pattern = r'^\d+x\d+$'
+        print(value)
+        match = re.match(pattern, value)
+        if not match:
+            raise argparse.ArgumentTypeError(
+                f"Dimensions must be in the format '[width]x[length]', for instance 1000x1000. Got: '{value}'"
+            )
+        return value.lower()
+
     def __init__(self):
         self.parser = CommandParser(
             exit_on_error=False,
             prog="!syn",
             description="This bot is an interface for chatting with large language models.",
-            add_help=True,
+            add_help=False
+        )
+        self.parser.add_argument(
+            '-h',
+            '--help',
+            action='store_true',
+            help='Show help message'
         )
         self.parser.add_argument(
             "-c",
@@ -84,13 +154,31 @@ class ChatbotParser:
             help="Save the prompt text as the system prompt for the remainder of the reply chain.",
         )
         self.parser.add_argument(
-            "-d",
             "-dry",
             "--dry-run",
-            action="store_true",
             default=None,
+            action="store_true",
             dest="dry_run",
-            help="Return the final prompt, rather than the bot's response.",
+            help="If passed, return the final prompt, rather than the bot's response.",
+        )
+        self.parser.add_argument(
+            "-m",
+            "-model",
+            "--model",
+            action="store",
+            default=None,
+            dest="model",
+            help="Which model to use.",
+        )
+        self.parser.add_argument(
+            "-d",
+            "-dim",
+            "--dimensions",
+            action="store",
+            type=self.image_dimensions,
+            default=None,
+            dest="dimensions",
+            help="Create an image with these dimensions. Use the form [width]x[height], for instance 1000x1000.",
         )
         self.parser.add_argument(
             "prompt", nargs=argparse.REMAINDER, help="The prompt to give the bot."

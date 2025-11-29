@@ -14,12 +14,13 @@ import asyncio
 
 from synthea.CharactersDatabase import CharactersDatabase
 
-from synthea.CommandParser import ChatbotParser, ParsedArgs
+from synthea.CommandParser import ChatbotParser, ParsedArgs, ParserExitedException
 from synthea.Config import Config
 from synthea.ContextManager import ContextManager
 from synthea.ImageModel import ImageModel
 from synthea.LanguageModel import LanguageModel
 from synthea.Model import Model
+from synthea.ModelDefinition import ModelDefinition
 from synthea.dtos.GenerationResponse import GenerationResponse
 from synthea.character_errors import (
     CharacterNotFoundError,
@@ -222,7 +223,11 @@ class SyntheaClient(discord.Client):
         ### Deal with the case that the user made a command in this message
         command: str = message_from_user.clean_content
         parser: ChatbotParser = ChatbotParser()
-        args: ParsedArgs = parser.parse(command)
+        try:
+            args: ParsedArgs = parser.parse(command)
+        except ParserExitedException as e:
+            await message_from_user.reply(e.message)           
+            return
 
         # if the user wants to use this as the system prompt going forward, just
         # give them a checkmark and wait for further prompts
@@ -234,8 +239,13 @@ class SyntheaClient(discord.Client):
         # ignore the LLM
         if args.use_image_model:
             response: GenerationResponse = GenerationResponse()
-            response.final_output = args.prompt
-            generated_images = await self.image_model.get_images_from_prompt(args.prompt)
+            start_time = datetime.now()
+            generated_images = await self.image_model.generate_image_from_prompt(args.prompt, dimensions=args.dimensions)
+            end_time = datetime.now()
+            response.final_output = f"""
+                {args.prompt.strip()} \n
+                ({args.dimensions if args.dimensions else config.image_default_dimensions}, took {(end_time - start_time).total_seconds():.2f}s)
+                """
             for node_id in generated_images:
                 for image_data in generated_images[node_id]:
                     response.images.append(image_data)
@@ -244,13 +254,12 @@ class SyntheaClient(discord.Client):
 
         # read the history to find the current applicable command
         context_manager = ContextManager(self.user.id)
-        system_prompt: str = self._generate_system_prompt()
-        chat_history, args = await context_manager.generate_chat_history_from_chat(
-            message_from_user, system_prompt=system_prompt
-        )
+        args = await context_manager.get_args_from_chat_history(message_from_user)
 
         char_id: str = args.character
         model: Model = self.language_model
+        model_definition: ModelDefinition = config.models[args.model if args.model else config.default_model_name]
+        system_prompt: str = self._generate_system_prompt(args, model_definition)
 
         # if the user responded to the bot playing a character, respond as that character
         replied_char_id = await self._get_character_replied_to(message_from_user)
@@ -277,23 +286,23 @@ class SyntheaClient(discord.Client):
                 system_prompt += "\n\n Here are some examples of how to speak:\n"
                 system_prompt += char_data["example_messages"]
 
-            chat_history, _ = await context_manager.generate_chat_history_from_chat(
-                message_from_user, system_prompt=system_prompt
-            )
+        chat_history, _ = await context_manager.generate_chat_history_from_chat(
+            message_from_user, model_definition=model_definition, system_prompt=system_prompt
+        )
 
         if (args.dry_run):
-            buffer = BytesIO(self.format_chat_messages(chat_history).encode())
+            buffer = BytesIO(self.format_chat_messages(chat_history, args).encode())
             dry_run_file: discord.File = discord.File(buffer, filename=ContextManager.REASONING_TXT_FILE_NAME)
             await self.send_response(message_to_reply=message_from_user, files=[dry_run_file])
             return
 
-        response: GenerationResponse = await model.queue_for_chat_generation(chat_history)
+        response: GenerationResponse = await model.queue_for_chat_generation(chat_history, args)
         response.final_output = self._preprocess_final_output(response.final_output)
         
         # check for image generation tags, and generate an image if so
         if ("<image>" in response.final_output and "</image>" in response.final_output):
             image_prompt: str = re.search(r'<image>(.*?)</image>', response.final_output, re.DOTALL).group(1)
-            generated_images = await self.image_model.get_images_from_prompt(image_prompt)
+            generated_images = await self.image_model.generate_image_from_prompt(image_prompt)
             response.final_output = re.sub(r'<image>.*?</image>', '', response.final_output, flags=re.DOTALL)
             for node_id in generated_images:
                 for image_data in generated_images[node_id]:
@@ -344,9 +353,8 @@ class SyntheaClient(discord.Client):
         embed = None
         if response.final_output:
             embed: discord.Embed = discord.Embed(
-                description=response.final_output
+                description=response.final_output if response.final_output.strip() else "..."
             )
-
         await self.send_response(embed=embed, message_to_reply=message, files=self.convert_generation_response_to_files(response))
 
     async def send_response_as_system(self, response: str, message: discord.Message):
@@ -425,12 +433,13 @@ class SyntheaClient(discord.Client):
         # print(f"Response ({len(response_text)} chars):\n{response_text}")
 
         if not embed and not files:
-            # TODO: Decide if sending a default response or raising an error is better.
             # For now, ominous default response because it's funny
             embed = discord.Embed(
                 description="...",
             )
             # raise ValueError("No embed or response text included in the response.")
+        if embed and not embed.description:
+            embed.description="..."
 
         bot_message: discord.Message = await message_to_reply.reply(mention_author=True, embed=embed, files=files)
 
@@ -497,17 +506,28 @@ class SyntheaClient(discord.Client):
         CLIENT_LOGGER.info(f"Appending {len(files)} files to the message.")
         return files
     
-    def _generate_system_prompt(self):
+    def _generate_system_prompt(self, args: ParsedArgs, model_definition: ModelDefinition):
+        """
+        Generates a system prompt
+
+        Args:
+            args: if passed, then 
+        """
         system_prompt: str = self.config.system_prompt 
 
-        if self.config.can_use_reasoning:
-            system_prompt += f"{self.config.reasoning_system_prompt}\n"
+        if args and args.use_as_system_prompt:
+            system_prompt = args.prompt
+            # if using a custom system prompt, don't alter it in any way
+            return system_prompt
+
+        # if model_definition.reasoning:
+        #     system_prompt += f"{self.config.reasoning_system_prompt}\n"
         if self.config.image_generation_enabled:
             system_prompt += f"{self.config.image_generation_system_prompt}\n"
 
         return system_prompt
     
-    def format_chat_messages(self, messages):
+    def format_chat_messages(self, messages, args):
         """
         Formats chat messages for easy reading and review.
         """
@@ -526,6 +546,11 @@ class SyntheaClient(discord.Client):
                 content_string,
                 "\n"
             ])
+        if args:
+            output.append(str(args))
         if output:
             return "\n".join(output)
         return ""
+    
+    async def get_models(self):
+        return await self.language_model.get_models()
