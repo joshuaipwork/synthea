@@ -12,7 +12,6 @@ import pypdf
 from jinja2 import Environment
 import os
 import requests
-import yaml
 
 from synthea.CharactersDatabase import CharactersDatabase
 from synthea.CommandParser import ChatbotParser, CommandError, ParsedArgs, ParserExitedException
@@ -21,12 +20,9 @@ from synthea.Config import Config
 from synthea.LanguageModel import LanguageModel
 
 
-from ToolUtilities import (
-    inference_logger,
-    get_assistant_message,
-    get_chat_template,
-    validate_and_extract_tool_calls
-)
+from ToolUtilities import inference_logger
+
+from synthea.ModelDefinition import ModelDefinition
 class ReplyChainIterator:
     """
     An async iterator which follows a chain of discord message replies until it reaches the end
@@ -85,6 +81,7 @@ class ContextManager:
 
     async def generate_chat_history_from_chat(
         self, message: discord.Message,
+        model_definition: ModelDefinition = None,
         system_prompt: Optional[str] = None,
     ) -> tuple[list[dict[str, str]], ParsedArgs]:
         """
@@ -105,35 +102,44 @@ class ContextManager:
             message=message,
             history_iterator=history_iterator,
             default_system_prompt=system_prompt,
+            model_definition=model_definition
         )
 
         return chat_history, args
 
-
-    async def convert_chat_history_to_prompt(self, chat_history: list[dict[str, str]], chat_template: str) -> str:
+    async def get_args_from_chat_history(self, message: discord.Message) -> tuple[list[dict[str, str]], ParsedArgs]:
         """
-        Takes a chat template and converts it to a prompt. 
+        Searches a reply chain for the last command that the user sent.
 
-        Args:
-            chat_history (list of dict of str to str): A list of chat messages to convert to a prompt.
-                Refer to huggingface's chat template feature for information on how this should be formatted.
-            chat_template (str): The jinja2 chat template to apply to the chat history.
+        Returns:
+            args: a ParsedArgs representing the most recent command in the
+                chat history
         """
-        chat_template = "{% for message in messages %}{% if message['role'] == 'user' %}{{ '### Instruction:\\n' + message['content'].strip()}}{% elif message['role'] == 'system' %}{{ message['content'].strip() }}{% elif message['role'] == 'assistant' %}{{ '### Response\\n'  + message['content'] }}{% endif %}{{'\\n\\n'}}{% endfor %}{{ '### Response:\\n' }}"
+        history_iterator: ReplyChainIterator = ReplyChainIterator(message)
+        config = Config()
+        last_command_args: ParsedArgs | None = None
 
-        # Create a Jinja2 environment and compile the template
-        env = Environment()
-        template = env.from_string(chat_template)
+        # retrieve as many tokens as can fit into the context length from history
+        async for message in history_iterator:
+            # some messages in the chain may be commands for the bot
+            # if so, parse only the prompt in each command in order to not confuse the bot
+            raw_content, _ = await self._get_content(message, None, None, read_attachments=False)
 
-        # Render the template with your messages
-        formatted_chat = template.render(messages=chat_history)
+            # merge all the text in the message and track the number of tokens
+            text: str = self._extract_text_from_content(raw_content)
 
-        return formatted_chat
+            # if the message is a command, parse it
+            if text.lower().startswith(config.command_start_str.lower()):
+                message_args: ParsedArgs = self.parser.parse(text)
+                return message_args
+        
+        return None
 
     async def compile_chat_history(
         self,
         message: discord.Message,
         history_iterator: AsyncIterator[discord.Message],
+        model_definition: ModelDefinition,
         default_system_prompt: Optional[str] = None,
     ) -> tuple[list[dict[str, str]], ParsedArgs]:
         """
@@ -167,7 +173,7 @@ class ContextManager:
         async for message in history_iterator:
             # some messages in the chain may be commands for the bot
             # if so, parse only the prompt in each command in order to not confuse the bot
-            raw_content, added_tokens = await self._get_content(message, history_token_limit - token_count, config)
+            raw_content, added_tokens = await self._get_content(message, model_definition, history_token_limit - token_count, read_attachments=True)
 
             # merge all the text in the message and track the number of tokens
             text: str = self._extract_text_from_content(raw_content)
@@ -200,10 +206,12 @@ class ContextManager:
             if added_tokens + token_count > history_token_limit:
                 break
 
-            # convert the text and any other content in the field to a 
+            # convert the text and any other content in the field to a list
+            # for processing
             content = []
             if text:
                 content.append({"type": "text", "text": text})
+            
             for entry in raw_content:
                 if entry.get("type") == "text":
                     continue
@@ -227,8 +235,8 @@ class ContextManager:
                     ]})
 
         return chat_messages, last_command_args
-    
-    async def _read_attachment(self, attachment: discord.Attachment) -> tuple[str, str] | None:
+
+    async def _read_attachment(self, attachment: discord.Attachment, model_definition: ModelDefinition) -> tuple[str, str] | None:
         """
         Args:
             attachment: The attachment to read 
@@ -265,7 +273,7 @@ class ContextManager:
             print("Removing the saved file")
             os.remove(attachment.filename)
         elif attachment.content_type.startswith("image/"):
-            if not config.can_process_images:
+            if not model_definition.vision:
                 inference_logger.info("Skipped processing attached image since the model cannot process images.")
                 return None
             print("Found image attachment")
@@ -282,7 +290,7 @@ class ContextManager:
         Gets 
         """
 
-    async def _get_content(self, message: discord.Message, remaining_tokens: int, config: Config) -> tuple[list[dict[str, str]], int]:
+    async def _get_content(self, message: discord.Message, model_definition: ModelDefinition, remaining_tokens: int, read_attachments: bool=False) -> tuple[list[dict[str, str]], int]:
         """
         Gets the text from a message and counts the tokens.
         """
@@ -299,25 +307,29 @@ class ContextManager:
         tokens += len(message_content["text"]) // self.EST_CHARS_PER_TOKEN
 
         # Iterate through any attachments associated with the message
-        for attachment in message.attachments:
-            attachment_contents = await self._read_attachment(attachment)
-            if not attachment_contents:
-                continue
-            openai_content_type, attachment_content = attachment_contents
-            content = {}
-            if not attachment_content or attachment_content.isspace():
-                content = {"type": "text", "text": "\n\nSYSTEM: A file was attached to this message, but it is either empty or is not a file type you can read."}
-                tokens += len(content["text"]) // self.EST_CHARS_PER_TOKEN
-            elif openai_content_type == "image_url":
-                content = {"type": "image_url", "image_url": self.image_to_base64(attachment_content)}
-                # TODO: calculate the number of tokens associated with image
-            elif (len(attachment_content) // self.EST_CHARS_PER_TOKEN) > remaining_tokens:
-                content = {"type": "text", "text": "\n\nSYSTEM: A file was attached to this message, but it was too large to be read."}
-                tokens += len(content["text"]) // self.EST_CHARS_PER_TOKEN
-            else:
-                content = {"type": "text", "text": f"\n\nSYSTEM: A file called {attachment.filename} was attached to this message. Here are the contents:\n {attachment_content}"}
-                tokens += len(content["text"]) // self.EST_CHARS_PER_TOKEN
-            contents.append(content)
+        if read_attachments:
+            for attachment in message.attachments:
+                attachment_contents = await self._read_attachment(attachment, model_definition)
+                if not attachment_contents:
+                    continue
+                openai_content_type, attachment_content = attachment_contents
+                content = {}
+                if attachment.filename == ContextManager.REASONING_TXT_FILE_NAME:
+                    # dont attach reasoning so the bot doesn't get clogged by its own thoughts
+                    continue
+                elif not attachment_content or attachment_content.isspace():
+                    content = {"type": "text", "text": "\n\nSYSTEM: A file was attached to this message, but it is either empty or is not a file type you can read."}
+                    tokens += len(content["text"]) // self.EST_CHARS_PER_TOKEN
+                elif openai_content_type == "image_url":
+                    content = {"type": "image_url", "image_url": {"url": self.image_to_base64(attachment_content)}}
+                    # TODO: calculate the number of tokens associated with image
+                elif remaining_tokens is not None and (len(attachment_content) // self.EST_CHARS_PER_TOKEN) > remaining_tokens:
+                    content = {"type": "text", "text": "\n\nSYSTEM: A file was attached to this message, but it was too large to be read."}
+                    tokens += len(content["text"]) // self.EST_CHARS_PER_TOKEN
+                else:
+                    content = {"type": "text", "text": f"\n\nSYSTEM: A file called {attachment.filename} was attached to this message. Here are the contents:\n {attachment_content}"}
+                    tokens += len(content["text"]) // self.EST_CHARS_PER_TOKEN
+                contents.append(content)
 
         return contents, tokens
     
@@ -333,7 +345,7 @@ class ContextManager:
         Updates text to include the username of the person sending the message
         """
         # inject the character's name if they are a character
-        if message.author.id == self.bot_user_id and message.embeds and message.embeds[0].footer.text:
+        if message.author.id == self.bot_user_id and message.embeds and message.embeds[0].footer and message.embeds[0].footer.text != SyntheaClient.SYSTEM_TAG:
             char_data: dict[str, str] = self.characters_database.load_character(message.embeds[0].footer.text)                
             text = f"[{char_data["display_name"]}]: " + text
         # inject You if no character is specified
