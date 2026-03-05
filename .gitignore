@@ -10,4 +10,5 @@ models/*
 Synthea.egg-info/
 **.db
 .vscode/
+venv/
 synthea/inference_logs/*
