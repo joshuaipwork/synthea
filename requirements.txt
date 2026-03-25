@@ -9,4 +9,4 @@ trafilatura
 pypdf
 pytest==7.4.0
 pytest-dependency==0.5.1
-openai.
+openai
