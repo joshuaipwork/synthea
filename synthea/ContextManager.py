@@ -8,17 +8,15 @@ import mimetypes
 from typing import AsyncIterator, Optional
 from urllib.parse import urlparse
 import discord
+from langchain.messages import AIMessage, HumanMessage
 import pypdf
-from jinja2 import Environment
 import os
 import requests
 
 from synthea.CharactersDatabase import CharactersDatabase
-from synthea.CommandParser import ChatbotParser, CommandError, ParsedArgs, ParserExitedException
+from synthea.CommandParser import ChatbotParser, ParsedArgs
 from synthea import SyntheaClient
-from synthea.Config import Config
-from synthea.LanguageModel import LanguageModel
-
+from config import Config
 
 from ToolUtilities import inference_logger
 
@@ -75,14 +73,12 @@ class ContextManager:
             the bot or from a user.
         """
         self.parser: ChatbotParser = ChatbotParser()
-        self.language_model: LanguageModel = LanguageModel()
         self.characters_database: CharactersDatabase = CharactersDatabase()
         self.bot_user_id: int = bot_user_id
 
     async def generate_chat_history_from_chat(
         self, message: discord.Message,
         model_definition: ModelDefinition = None,
-        system_prompt: Optional[str] = None,
     ) -> tuple[list[dict[str, str]], ParsedArgs]:
         """
         Generates a prompt which includes the context from previous messages in a reply chain.
@@ -101,7 +97,6 @@ class ContextManager:
         chat_history, args = await self.compile_chat_history(
             message=message,
             history_iterator=history_iterator,
-            default_system_prompt=system_prompt,
             model_definition=model_definition
         )
 
@@ -140,7 +135,6 @@ class ContextManager:
         message: discord.Message,
         history_iterator: AsyncIterator[discord.Message],
         model_definition: ModelDefinition,
-        default_system_prompt: Optional[str] = None,
     ) -> tuple[list[dict[str, str]], ParsedArgs]:
         """
         Generates an openai completion endpoint compatible messages object
@@ -168,8 +162,6 @@ class ContextManager:
 
         # retrieve as many tokens as can fit into the context length from history
         history_token_limit: int = config.context_length - config.max_new_tokens
-        system_prompt_tokens: int = len(default_system_prompt) // self.EST_CHARS_PER_TOKEN
-        token_count += system_prompt_tokens
         async for message in history_iterator:
             # some messages in the chain may be commands for the bot
             # if so, parse only the prompt in each command in order to not confuse the bot
@@ -219,20 +211,11 @@ class ContextManager:
 
             # update the list of messages with this message
             if message.author.id == self.bot_user_id:
-                chat_messages.insert(0, {"role": "assistant", "content": content})
+                chat_messages.insert(0, AIMessage(content=content))
             else:
-                chat_messages.insert(0, {"role": "user", "content": content})
+                chat_messages.insert(0, HumanMessage(content=content))
             
             token_count += added_tokens
-
-        # add the system prompt
-        if not system_prompt:
-            system_prompt = default_system_prompt
-        if config.use_tools:
-            system_prompt += f"\n{config.tool_prompt}"
-        chat_messages.insert(0, {"role": "system", "content": [
-                    {"type": "text", "text": (system_prompt if system_prompt else default_system_prompt)}
-                    ]})
 
         return chat_messages, last_command_args
 
@@ -258,31 +241,31 @@ class ContextManager:
             if (attachment.filename != ContextManager.REASONING_TXT_FILE_NAME):
                 attachment_string = attachment_bytes.decode()
             else:
-                print("Skipping txt file because it contains bot reasoning.")
+                inference_logger.info("Skipping txt file because it contains bot reasoning.")
         elif "application/pdf" in attachment.content_type:
-            print("Saving the pdf attachment")
+            inference_logger.info("Saving the pdf attachment")
             openai_content_type = "text"
             await attachment.save(attachment.filename)
             reader = pypdf.PdfReader(attachment.filename)
 
-            print(f"Found {len(reader.pages)} pages in PDF. Reading them.")
+            inference_logger.info(f"Found {len(reader.pages)} pages in PDF. Reading them.")
             for page in reader.pages:
                 page_text = page.extract_text()
                 attachment_string = attachment_string + "\n" + page_text
             
-            print("Removing the saved file")
+            inference_logger.info("Removing the saved file")
             os.remove(attachment.filename)
         elif attachment.content_type.startswith("image/"):
             if not model_definition.vision:
                 inference_logger.info("Skipped processing attached image since the model cannot process images.")
                 return None
-            print("Found image attachment")
+            inference_logger.info("Found image attachment")
             # just incldue the image url
             openai_content_type = "image_url"
             attachment_string = attachment.url
 
-        print(f"Obtained the text from the [{attachment.content_type}] attachment as a string")
-        print(f"Recorded as ({openai_content_type}, {attachment_string})")
+        inference_logger.info(f"Obtained the text from the [{attachment.content_type}] attachment as a string")
+        inference_logger.info(f"Recorded as ({openai_content_type}, {attachment_string})")
         return (openai_content_type, attachment_string)
 
     async def _get_linked_content(self, message: discord.Message, remaining_tokens: int, config: Config) -> tuple[list[dict[str, str]], int]:

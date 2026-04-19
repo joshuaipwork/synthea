@@ -15,12 +15,12 @@ import asyncio
 from synthea.CharactersDatabase import CharactersDatabase
 
 from synthea.CommandParser import ChatbotParser, ParsedArgs, ParserExitedException
-from synthea.Config import Config
+from config import Config
 from synthea.ContextManager import ContextManager
 from synthea.ImageModel import ImageModel
-from synthea.LanguageModel import LanguageModel
 from synthea.Model import Model
 from synthea.ModelDefinition import ModelDefinition
+from synthea.agentic_model import AgenticModel
 from synthea.dtos.GenerationResponse import GenerationResponse
 from synthea.character_errors import (
     CharacterNotFoundError,
@@ -70,7 +70,7 @@ class SyntheaClient(discord.Client):
     def __init__(self, intents):
         super().__init__(intents=intents)
 
-        self.language_model: LanguageModel = LanguageModel()
+        self.llm: AgenticModel = AgenticModel()
         self.image_model: ImageModel = ImageModel()
         self.config: Config = Config()
         self.char_db = CharactersDatabase()
@@ -220,7 +220,7 @@ class SyntheaClient(discord.Client):
         """
         config: Config = Config()
 
-        ### Deal with the case that the user made a command in this message
+        # Deal with the case that the user made a command in this message
         command: str = message_from_user.clean_content
         parser: ChatbotParser = ChatbotParser()
         try:
@@ -240,11 +240,13 @@ class SyntheaClient(discord.Client):
         if args.use_image_model:
             response: GenerationResponse = GenerationResponse()
             start_time = datetime.now()
-            generated_images = await self.image_model.generate_image_from_prompt(args.prompt, dimensions=args.dimensions)
+
+            generated_images = await self.image_model.generate_image_from_prompt(
+                args.prompt, width=args.image_width, height=args.image_height)
             end_time = datetime.now()
             response.final_output = f"""
                 {args.prompt.strip()} \n
-                ({args.dimensions if args.dimensions else config.image_default_dimensions}, took {(end_time - start_time).total_seconds():.2f}s)
+                ({args.dimensions if args.dimensions else f"{config.image_default_height}x{config.image_default_width}"}, took {(end_time - start_time).total_seconds():.2f}s)
                 """
             for node_id in generated_images:
                 for image_data in generated_images[node_id]:
@@ -257,8 +259,8 @@ class SyntheaClient(discord.Client):
         args = await context_manager.get_args_from_chat_history(message_from_user)
 
         char_id: str = args.character
-        model: Model = self.language_model
-        model_definition: ModelDefinition = config.models[args.model if args.model else config.default_model_name]
+        model: Model = self.llm
+        model_definition: ModelDefinition = config.models[args.model.lower() if args.model else config.default_model_name]
         system_prompt: str = self._generate_system_prompt(args, model_definition)
 
         # if the user responded to the bot playing a character, respond as that character
@@ -266,8 +268,13 @@ class SyntheaClient(discord.Client):
         if replied_char_id:
             char_id = replied_char_id
 
-        # parse the chat again if it's a character
-        # TODO: simplify
+        # TODO: Deprecate dry_run
+        # if (args.dry_run):
+        #     buffer = BytesIO(self.format_chat_messages(chat_history, args).encode())
+        #     dry_run_file: discord.File = discord.File(buffer, filename=ContextManager.REASONING_TXT_FILE_NAME)
+        #     await self.send_response(message_to_reply=message_from_user, files=[dry_run_file])
+        #     return
+        
         if char_id and char_id != SYSTEM_TAG:
             can_access = self.char_db.can_access_character(
                 char_id=char_id,
@@ -286,28 +293,20 @@ class SyntheaClient(discord.Client):
                 system_prompt += "\n\n Here are some examples of how to speak:\n"
                 system_prompt += char_data["example_messages"]
 
-        chat_history, _ = await context_manager.generate_chat_history_from_chat(
-            message_from_user, model_definition=model_definition, system_prompt=system_prompt
-        )
-
-        if (args.dry_run):
-            buffer = BytesIO(self.format_chat_messages(chat_history, args).encode())
-            dry_run_file: discord.File = discord.File(buffer, filename=ContextManager.REASONING_TXT_FILE_NAME)
-            await self.send_response(message_to_reply=message_from_user, files=[dry_run_file])
-            return
-
-        response: GenerationResponse = await model.queue_for_chat_generation(chat_history, args)
+        chat_history, _ = await context_manager.generate_chat_history_from_chat(message_from_user, model_definition=model_definition)
+        response: GenerationResponse = await model.queue_for_generation(
+            chat_history, args=args, persona_system_prompt=system_prompt)
         response.final_output = self._preprocess_final_output(response.final_output)
         
-        # check for image generation tags, and generate an image if so
-        if ("<image>" in response.final_output and "</image>" in response.final_output):
-            image_prompt: str = re.search(r'<image>(.*?)</image>', response.final_output, re.DOTALL).group(1)
-            generated_images = await self.image_model.generate_image_from_prompt(image_prompt)
-            response.final_output = re.sub(r'<image>.*?</image>', '', response.final_output, flags=re.DOTALL)
-            for node_id in generated_images:
-                for image_data in generated_images[node_id]:
-                    response.images.append(image_data)
-            response.reasoning += f"\nIMAGE PROMPT: {image_prompt}"
+        # # check for image generation tags, and generate an image if so
+        # if ("<image>" in response.final_output and "</image>" in response.final_output):
+        #     image_prompt: str = re.search(r'<image>(.*?)</image>', response.final_output, re.DOTALL).group(1)
+        #     generated_images = await self.image_model.generate_image_from_prompt(image_prompt)
+        #     response.final_output = re.sub(r'<image>.*?</image>', '', response.final_output, flags=re.DOTALL)
+        #     for node_id in generated_images:
+        #         for image_data in generated_images[node_id]:
+        #             response.images.append(image_data)
+        #     response.reasoning += f"\nIMAGE PROMPT: {image_prompt}"
 
         if char_id and char_id != SYSTEM_TAG:
             CLIENT_LOGGER.info(f"Responded to {message_from_user.author} with char {char_id}")
@@ -553,4 +552,4 @@ class SyntheaClient(discord.Client):
         return ""
     
     async def get_models(self):
-        return await self.language_model.get_models()
+        return await self.llm.get_models()

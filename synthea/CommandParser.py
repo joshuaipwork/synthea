@@ -4,8 +4,10 @@ import re
 from typing import IO, NoReturn
 import yaml
 
-from synthea.Config import Config
+from config import Config
+from synthea.exceptions import InvalidImageDimensionsException
 
+config = Config()
 
 class CommandError(ValueError):
     """
@@ -101,6 +103,8 @@ class ParsedArgs:
     dry_run: bool = False
     model: str = None
     dimensions: str = None
+    image_width: str = None
+    image_height: str = None
     help: bool = False
 
 class ChatbotParser:
@@ -108,7 +112,7 @@ class ChatbotParser:
         """Validate and parse dimensions in the form '[width]x[length]'."""
         pattern = r'^\d+x\d+$'
         print(value)
-        match = re.match(pattern, value)
+        match = re.match(pattern, value.lower())
         if not match:
             raise argparse.ArgumentTypeError(
                 f"Dimensions must be in the format '[width]x[length]', for instance 1000x1000. Got: '{value}'"
@@ -184,18 +188,38 @@ class ChatbotParser:
             "prompt", nargs=argparse.REMAINDER, help="The prompt to give the bot."
         )
 
-        # load config
-        self.config = Config()
-
     def parse(self, command: str) -> ParsedArgs:
         """
         Parses a command given by the user.
         """
         # remove the command start string if it was present.
-        if command.lower().startswith(self.config.command_start_str.lower()):
-            command = command[len(self.config.command_start_str):]
+        if command.lower().startswith(config.command_start_str.lower()):
+            command = command[len(config.command_start_str):]
 
         # convert the parsed args into an object for better type matching
         args: ParsedArgs = self.parser.parse_args(command.split(), namespace=ParsedArgs())
+
+        # post-process some args
+        args.model = args.model.lower() if args.model else None
         args.prompt = " ".join(args.prompt)
+
+        if args.dimensions:
+            args.image_width, args.image_height = self._parse_dimensions(args.dimensions)
         return args
+
+    def _parse_dimensions(self, value: str) -> tuple[int, int]:        
+        values = value.split('x')
+        if len(values) != 2:
+            raise InvalidImageDimensionsException(f"Couldn't parse '{value}' into a width and height")
+
+        width, height = int(values[0]), int(values[1])
+
+        if width < 16 or height < 16:
+            raise InvalidImageDimensionsException(f"Invalid dimensions {value} - minimum size is 16x16")
+        if width > 16384 or height > 16384:
+            raise InvalidImageDimensionsException(f"Invalid dimensions {value} - maximum size is 16384x16384")
+        if width * height > config.image_maximum_pixels:
+            raise InvalidImageDimensionsException(
+                f"Dimensions {value} exceed the maximum pixel count of {config.image_maximum_pixels}")
+    
+        return width, height

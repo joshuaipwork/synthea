@@ -1,12 +1,15 @@
 discord>=2.3.2
 ruamel.yaml
-torch
-torchvision
-torchaudio
-transformers>=4.31.0
 trafilatura
-# llama-cpp-python is also installed, but because of special arguments it is installed within install.sh instead.
 pypdf
 pytest==7.4.0
 pytest-dependency==0.5.1
 openai
+langgraph
+langchain
+langchain-openai
+langchain-community
+langchain-tavily
+langfuse
+mem0ai
+websockets

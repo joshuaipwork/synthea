@@ -2,18 +2,15 @@
 The starting point for the program
 """
 
-import multiprocessing
 from typing import List
 import discord
 from discord import app_commands
 import openai
 import yaml
-import asyncio
 
-from synthea.Config import Config
+from config import Config
 from synthea.ModelDefinition import ModelDefinition
 from synthea.SyntheaClient import SyntheaClient
-from synthea.dtos.ResponseUpdate import ResponseUpdate
 from synthea.modals.CharCreationView import CharCreationView
 from synthea.modals.UpdateCharModal import UpdateCharModal
 from synthea.modals.CharCreationStep import CharCreationStep
