@@ -1,4 +1,5 @@
 from datetime import datetime, time
+import json
 from typing import Annotated, List, TypedDict
 import zoneinfo
 
@@ -102,12 +103,16 @@ class AgenticModel(Model):
         images = list(state.get("images") or [])
 
         for tool_call in last_message.tool_calls:
+            # sanitize arguments to resolve common failure cases
+            # such as quoted strings
+            tool_call["args"] = sanitize_args(tool_call["args"])
+
             tool_fn = {t.name: t for t in self.tools}[tool_call["name"]]
             try:
                 result = await tool_fn.ainvoke(tool_call["args"])
             except Exception as e:
                 results.append(ToolMessage(
-                    content=f"Tool error: {e}",
+                    content=f"The tool has encountered an error. You may need to use different arguments, or stop using this tool if the issue cannot be resolved. Tool error: {e}",
                     tool_call_id=tool_call["id"]
                 ))
                 continue
@@ -115,7 +120,7 @@ class AgenticModel(Model):
             if tool_call["name"] == "generate_image":  # your image tool
                 images.append(result)  # stash the URL/path
                 results.append(ToolMessage(
-                    content="Image generated successfully.",
+                    content="Image generated successfully. It has been added to the 'images' field of the state and will be returned with your final message to the user.",
                     tool_call_id=tool_call["id"]
                 ))
             else:
@@ -155,7 +160,7 @@ class AgenticModel(Model):
     #         return "No memories stored."
     #     return "\n".join(f"- {r['memory']}" for r in results.get("results", []))
 
-    async def queue_for_generation(self, chat_history: list[dict[str, dict[str, str]]],
+    async def queue_for_generation(self, chat_history: list[BaseMessage],
                                    args: ParsedArgs = None,
                                    persona_system_prompt: str = None) -> GenerationResponse:
         synthea_config: Config = Config()
@@ -168,14 +173,6 @@ class AgenticModel(Model):
             api_key=synthea_config.api_key,
             base_url=synthea_config.api_base_url, 
             temperature=0).bind_tools(self.tools)
-
-        # if not synthea_config.models[model_name].vision:
-        #     for chat_message in chat_history:
-        #         text = ""
-        #         for content_part in chat_message["content"]:
-        #             if content_part["type"] == "text":
-        #                 text += content_part["text"]
-        #         chat_message["content"] = text
 
         inference_logger.info(f"Generating with model {model_name}")
         now = datetime.now(tz=zoneinfo.ZoneInfo("America/Los_Angeles"))
@@ -223,3 +220,20 @@ async def generate_image(prompt: str, width: int, height: int) -> bytes:
     for node_id in response:
         for image_data in response[node_id]:
             return image_data
+
+def sanitize_args(args: dict) -> dict:
+    sanitized = {}
+    for k, v in args.items():
+        if isinstance(v, str):
+            try:
+                parsed = json.loads(v)
+                # only unwrap if the result is a primitive, not a dict/list
+                if isinstance(parsed, (str, int, float, bool)):
+                    sanitized[k] = parsed
+                else:
+                    sanitized[k] = v
+            except (json.JSONDecodeError, ValueError):
+                sanitized[k] = v
+        else:
+            sanitized[k] = v
+    return sanitized
