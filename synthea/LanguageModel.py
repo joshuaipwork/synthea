@@ -1,21 +1,16 @@
 
-import asyncio
-import json
 import re
 from typing import Dict, List, override
 import aiohttp
 import openai
-from openai_harmony import HarmonyEncodingName, Message, load_harmony_encoding, HarmonyEncoding
 from openai.types.chat.chat_completion import ChatCompletion
 from openai.types.completion import Completion
 import requests
 
 from synthea.ModelFormatDefinition import ModelFormatDefinition
 from synthea.CommandParser import ParsedArgs
-from synthea.Config import Config
+from config import Config
 from synthea.Model import Model
-
-from jinja2 import Template
 
 import Tools
 from ToolUtilities import inference_logger
@@ -162,11 +157,12 @@ class LanguageModel(Model):
         if args and args.model:
             model = args.model
 
-        print(chat_history)
+        inference_logger.info(f"Message chat_history: {chat_history[-1]}")
 
-        print(f"Generating with model {model}")
+        inference_logger.info(f"Generating with model {model}")
         chat_completion: ChatCompletion = await self.openai.chat.completions.create(
             messages=chat_history,
+            reasoning_effort='high',
             model=model,
             max_tokens=config.max_new_tokens,
             stop=config.stop_words

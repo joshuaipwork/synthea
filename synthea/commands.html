@@ -1,0 +1,22 @@
+/home/oem/Documents/repos/llama.cpp/build/bin/llama-server --model /home/oem/Documents/repos/models/Phi-lthy4-Q8_0.gguf -ngl 999 -ts 0,1,1,1,1 --api-key synthia --host 0.0.0.0 --alias synthia:latest --temp 0.8 --repeat-penalty 1.12 --repeat-last-n 1024 --top-p 0.95 --top-k 25 --min-p 0
+
+/home/oem/Documents/repos/llama.cpp/build/bin/llama-server --model /home/oem/Documents/repos/models/Harbinger-24B-Q8_0.gguf -ngl 999 -ts 0,1,1,1,1 --api-key synthia --host 0.0.0.0 --alias synthia:latest --temp 0.8 --repeat-penalty 1.05 --min-p 0.025
+
+/home/oem/Documents/repos/llama.cpp/build/bin/llama-server --model /home/oem/Documents/repos/models/Qwen3-32B-Q8_0.gguf -ngl 999 -ts 0,1,1,1,1 --api-key synthia --host 0.0.0.0 --alias synthia:latest --temp 0.6 --top-p 0.95 --top-k 20 --min-p 0
+
+/home/oem/Documents/repos/llama.cpp/build/bin/llama-server --model /home/oem/Documents/repos/models/Cydonia-24B-v3j-Q8_0.gguf -ngl 999 -ts 0,1,1,1,1 --api-key synthia --host 0.0.0.0 --alias synthia:latest --temp 0.7 --top-p 0.95 --min-p 0.025
+
+/home/oem/Documents/repos/llama.cpp/build/bin/llama-server --model /home/oem/Documents/repos/models/CohereForAI_c4ai-command-a-03-2025-Q5_K_M.gguf -ngl 999 -ts 1,1,1,1,1,0 --api-key synthia --host 0.0.0.0 --alias synthia:latest --temp 0.7 --top-p 0.95 --min-p 0.025 -c 32768
+
+CohereForAI_c4ai-command-a-03-2025-Q5_K_M-00001-of-00002.gguf
+
+docker compose -f openwebui.yaml up -d
+cloudflared tunnel run synthea
+./start.sh
+
+
+conda activate comfyenv && python /home/oem/Documents/repos/ComfyUI/main.py
+
+
+cmake -B build -DGGML_CUDA=ON -DLLAMA_CURL=OFF
+cmake --build build --config Release

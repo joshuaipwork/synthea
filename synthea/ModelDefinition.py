@@ -11,4 +11,5 @@ class ModelDefinition:
     description: str
     vision: bool
     reasoning: bool
+    enforce_reasoning: bool
     template: ModelFormatDefinition

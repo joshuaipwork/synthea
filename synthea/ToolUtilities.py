@@ -8,6 +8,8 @@ import xml.etree.ElementTree as ET
 
 from logging.handlers import RotatingFileHandler
 
+from synthea.exceptions import InvalidImageDimensionsException
+
 logging.basicConfig(
     format="%(asctime)s,%(msecs)03d %(levelname)-8s [%(filename)s:%(lineno)d] %(message)s",
     datefmt="%Y-%m-%d:%H:%M:%S",
@@ -147,3 +149,24 @@ def extract_json_from_markdown(text):
     else:
         print("JSON string not found in the text.")
     return None
+
+def parse_dimensions(self, dimensions: str) -> tuple[int, int]:
+    """
+    Parses a dimension string of the form '1000x1000' into a width and height,
+    applying the limitations of the ComfyUI empty latent image node.
+    """
+    values = dimensions.split('x')
+    if len(values) != 2:
+        raise InvalidImageDimensionsException(f"Couldn't parse '{dimensions}' into a width and height")
+
+    width, height = int(values[0]), int(values[1])
+
+    if width < 16 or height < 16:
+        raise InvalidImageDimensionsException(f"Invalid dimensions {dimensions} - minimum size is 16x16")
+    if width > 16384 or height > 16384:
+        raise InvalidImageDimensionsException(f"Invalid dimensions {dimensions} - maximum size is 16384x16384")
+    if width * height > self.config.image_maximum_pixels:
+        raise InvalidImageDimensionsException(
+            f"Dimensions {dimensions} exceed the maximum pixel count of {self.config.image_maximum_pixels}")
+
+    return width, height

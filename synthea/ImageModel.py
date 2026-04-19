@@ -1,122 +1,84 @@
-from collections import deque
-import math
 import random
-import websockets #NOTE: websocket-client (https://github.com/websocket-client/websocket-client)
 import uuid
 import json
-import urllib.request
-import urllib.parse
 import asyncio
+import requests
 
-from synthea.Config import Config
+from config import Config
 from synthea.exceptions import InvalidImageDimensionsException
 
-image_server_address = "127.0.0.1:8188"
+config = Config()
 client_id = str(uuid.uuid4())
 
 class ImageModel:
-    """ A class for generating images by connecting to a ComfyUI server instance. """
+    """Generates images by connecting to a ComfyUI server instance."""
+
     def __init__(self):
+        self.config = config
         self.processing_lock = asyncio.Lock()
+        self.session = requests.Session()
+        self.session.headers.update(config.image_generation_api_headers)
 
-    def _parse_dimensions(self, dimensions: str):
-        """ 
-        Parses a dimension of form '1000x1000' into a width and height, applying the limitations of the
-        comfyUI empty latent image node. 
-        """
-        config: Config = Config()
-        values = dimensions.split('x')
-        if len(values) != 2:
-            raise InvalidImageDimensionsException(f"Couldn't parse {dimensions} into a width and height")
-        width, height = int(values[0]), int(values[1])
-        if width < 16 or height < 16:
-            raise InvalidImageDimensionsException(f"Invalid dimensions {dimensions} - The width and height must be at minimum 16 pixels")
-        if width > 16384 or height > 16384:
-            raise InvalidImageDimensionsException(f"Invalid dimensions {dimensions} - The width and height must be at most 16384 pixels")
-        if width * height > config.image_maximum_pixels:
-            raise InvalidImageDimensionsException(
-                f"Tried to make image of dimensions {dimensions}, which is larger than the maximum number of pixels {config.image_maximum_pixels}")
-        return width, height
+    def _apply_values_to_workflow(self, workflow: dict, positive_prompt: str, negative_prompt: str, seed: int, width: int, height: int) -> None:
+        """Substitutes user-provided values into the ComfyUI workflow."""
+        workflow[str(self.config.comfyui_prompt_node_id)]["inputs"][self.config.comfyui_prompt_input_name] = positive_prompt
+        workflow[str(self.config.comfyui_width_node_id)]["inputs"][self.config.comfyui_width_input_name] = width
+        workflow[str(self.config.comfyui_height_node_id)]["inputs"][self.config.comfyui_height_input_name] = height
+        workflow[str(self.config.comfyui_seed_node_id)]["inputs"][self.config.comfyui_seed_input_name] = seed
 
-    async def generate_image_from_prompt(self, positive_prompt, negative_prompt="", dimensions=""):
-        """ Generates an image from a prompt """
-        config: Config = Config()
+    def _request(self, method: str, path: str, **kwargs) -> requests.Response:
+        """Makes a request to the ComfyUI API, raising on HTTP errors."""
+        url = f"{self.config.image_generation_api_base_url}{path}"
+        resp = self.session.request(method, url, **kwargs)
+        resp.raise_for_status()
+        return resp
+
+    def _queue_prompt(self, prompt: dict) -> dict:
+        """Queues a prompt for generation, returning the response from ComfyUI."""
+        return self._request("POST", "/prompt", json={"prompt": prompt, "client_id": client_id}).json()
+
+    def _get_image(self, filename: str, subfolder: str, folder_type: str) -> bytes:
+        """Fetches a generated image from ComfyUI."""
+        params = {"filename": filename, "subfolder": subfolder, "type": folder_type}
+        return self._request("GET", "/view", params=params).content
+
+    def _get_history(self, prompt_id: str) -> dict:
+        """Fetches the generation history for a given prompt ID."""
+        return self._request("GET", f"/history/{prompt_id}").json()
+
+    async def _get_images_from_workflow(self, workflow: dict) -> dict[str, list[bytes]]:
+        """Queues a workflow and polls until complete, then returns all output images."""
+        prompt_id = self._queue_prompt(workflow)['prompt_id']
+
+        while True:
+            history = self._get_history(prompt_id)
+            if prompt_id in history:
+                break
+            await asyncio.sleep(1)
+
+        output_images = {}
+        for node_id, node_output in history[prompt_id]['outputs'].items():
+            if 'images' in node_output:
+                output_images[node_id] = [
+                    self._get_image(img['filename'], img['subfolder'], img['type'])
+                    for img in node_output['images']
+                ]
+
+        return output_images
+
+    async def generate_image_from_prompt(self, positive_prompt: str, negative_prompt: str = "", width: int = None, height: int = None) -> dict[str, list[bytes]]:
+        """Generates images from a prompt, returning a dict of node ID to image bytes."""
+        if width is None:
+            width = self.config.image_default_width
+        if height is None:
+            height = self.config.image_default_height
+
         async with self.processing_lock:
-            with open(f'./synthea/comfyui_workflows/{config.image_generation_workflow_name}.json', 'r') as workflow_json:
-                seed = random.random() * 1000000000
-                workflow: dict = json.load(workflow_json)
-                self.apply_values_to_workflow(workflow, positive_prompt, negative_prompt, seed, dimensions)
-                images = await self._get_images_from_workflow(workflow)
-                print(f"Received {len(images)} images")
-                return images
+            with open(self.config.comfyui_workflow_path, 'r') as f:
+                workflow = json.load(f)
 
-    def apply_values_to_workflow(self, workflow: dict[str, dict[str,str]], positive_prompt: str, negative_prompt: str, seed: int, dimensions: str=""):
-        """ Substitutes in values into the workflow """
-        config: Config = Config()
-        for node in workflow.values():
-            if node['_meta']['title'].startswith("Positive Prompt"):
-                node["inputs"]['text'] = positive_prompt
-            if node['_meta']['title'].startswith("Negative Prompt"):
-                node["inputs"]['text'] = negative_prompt
-            if node['_meta']['title'].startswith("Sampler"):
-                node["inputs"]['seed'] = seed
-            if node['_meta']['title'].startswith("Base Image"):
-                if dimensions:
-                    width, height = self._parse_dimensions(dimensions)
-                else:
-                    width, height = self._parse_dimensions(config.image_default_dimensions)
-                node["inputs"]['width'] = width
-                node["inputs"]['height'] = height
-
-    # queues a prompt for generation.
-    def _queue_prompt(self, prompt: dict[str, str]) -> dict[str, str]:
-        p = {"prompt": prompt, "client_id": client_id}
-        data = json.dumps(p).encode('utf-8')
-        req =  urllib.request.Request(f"http://{image_server_address}/prompt", data=data)
-        return json.loads(urllib.request.urlopen(req).read())
-
-    def _get_image(self, filename, subfolder, folder_type):
-        data = {"filename": filename, "subfolder": subfolder, "type": folder_type}
-        url_values = urllib.parse.urlencode(data)
-        with urllib.request.urlopen(f"http://{image_server_address}/view?{url_values}") as response:
-            return response.read()
-
-    def _get_history(self, prompt_id):
-        with urllib.request.urlopen(f"http://{image_server_address}/history/{prompt_id}") as response:
-            return json.loads(response.read())
-
-    async def _get_images_from_workflow(self, workflow: dict[str, str]) -> dict[str, bytes]:
-        # client_id = str(id(workflow))  # Generate unique client ID for this request
-        async with websockets.connect(f"ws://{image_server_address}/ws?clientId={client_id}") as websocket:
-            prompt_id = self._queue_prompt(workflow)['prompt_id']
-            output_images = {}
-
-            # tell the 
-            while True:
-                out = await asyncio.wait_for(websocket.recv(), timeout=300)
-                if isinstance(out, str):
-                    message = json.loads(out)
-                    if message['type'] == 'executing':
-                        data = message['data']
-                        if data['node'] is None and data['prompt_id'] == prompt_id:
-                            break #Execution is done
-                else:
-                    # If you want to be able to decode the binary stream for latent previews, here is how you can do it:
-                    # bytesIO = BytesIO(out[8:])
-                    # preview_image = Image.open(bytesIO) # This is your preview in PIL image format, store it in a global
-                    print(f"Found non-str message!")
-                    continue # previews are binary data
-
-            history = self._get_history(prompt_id)[prompt_id]
-            for node_id in history['outputs']:
-                node_output = history['outputs'][node_id]
-                images_output = []
-                if 'images' in node_output:
-                    for image in node_output['images']:
-                        image_data = self._get_image(image['filename'], image['subfolder'], image['type'])
-                        images_output.append(image_data)
-                output_images[node_id] = images_output
-
-            print("Finished generating images")
-            return output_images
-    
+            seed = random.random() * 1000000000
+            self._apply_values_to_workflow(workflow, positive_prompt, negative_prompt, seed, width, height)
+            images = await self._get_images_from_workflow(workflow)
+            print(f"Received {len(images)} images")
+            return images
