@@ -103,7 +103,14 @@ class AgenticModel(Model):
 
         for tool_call in last_message.tool_calls:
             tool_fn = {t.name: t for t in self.tools}[tool_call["name"]]
-            result = await tool_fn.ainvoke(tool_call["args"])
+            try:
+                result = await tool_fn.ainvoke(tool_call["args"])
+            except Exception as e:
+                results.append(ToolMessage(
+                    content=f"Tool error: {e}",
+                    tool_call_id=tool_call["id"]
+                ))
+                continue
 
             if tool_call["name"] == "generate_image":  # your image tool
                 images.append(result)  # stash the URL/path
