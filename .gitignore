@@ -12,3 +12,5 @@ Synthea.egg-info/
 .vscode/
 synthea/inference_logs/*
 venv/
+comfyui_workflows
+config.yaml
