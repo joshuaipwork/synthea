@@ -2,7 +2,6 @@ import argparse
 from dataclasses import dataclass
 import re
 from typing import IO, NoReturn
-import yaml
 
 from config import Config
 from synthea.exceptions import InvalidImageDimensionsException
@@ -13,7 +12,6 @@ class CommandError(ValueError):
     """
     Indicates that the command parser encountered an error while parsing.
     """
-
 
 class ParserExitedException(Exception):
     """
@@ -33,7 +31,7 @@ class CommandParser(argparse.ArgumentParser):
         if parsed_args.help:
             # We want to show different help based on whether other flags are present
             if parsed_args.use_image_model:  # If -im was provided (even without a value, it might be set to the default or True)
-                raise ParserExitedException(f'''
+                raise ParserExitedException('''
                     ```usage: !syn -im [-h] [-dim "[width]x[height]"] prompt
 
                     This bot is an interface for using AI models. 
@@ -51,7 +49,7 @@ class CommandParser(argparse.ArgumentParser):
                                             for example 1024x1024.
                     ```''')
             else:
-                raise ParserExitedException(f'''
+                raise ParserExitedException('''
                     ```usage: !syn [-h] [-c CHARACTER] [-im] [-sp] [-d] [-m MODEL] prompt
 
                     This bot is an interface for using AI models. 
@@ -69,9 +67,6 @@ class CommandParser(argparse.ArgumentParser):
                     -sp, -system-prompt, --use-as-system-prompt
                                             Save the prompt text as the system prompt
                                             for the remainder of the reply chain.
-                    -dry, --dry-run
-                                            If passed, return the final prompt,
-                                            rather than the bot's response.
                     -m MODEL, -model MODEL, --model MODEL
                                             The language model to use.
                     ```''')

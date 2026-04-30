@@ -19,7 +19,7 @@ from config import Config
 from synthea.ContextManager import ContextManager
 from synthea.image_generation import ImageModel
 from synthea.model import Model
-from synthea.model import ModelDefinition
+from synthea.model_definition import ModelDefinition
 from synthea.agentic_model import AgenticModel
 from synthea.dtos.GenerationResponse import GenerationResponse
 from synthea.character_errors import (

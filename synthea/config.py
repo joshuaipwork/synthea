@@ -1,6 +1,6 @@
 import yaml
 
-from synthea.model import ModelDefinition
+from synthea.model_definition import ModelDefinition
 
 class Config:
     """
