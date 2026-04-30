@@ -18,17 +18,6 @@ class Config:
         self.system_prompt: str = loaded_file["system_prompt"]
         self.bot_name: str = loaded_file["bot_name"]
 
-        # generation parameters
-        self.temperature: float = loaded_file["temperature"]
-        self.presence_penalty: float = loaded_file["presence_penalty"]
-        self.frequency_penalty: float = loaded_file["frequency_penalty"]
-        self.top_p: float = loaded_file["top_p"]
-        # self.stop_words: list[str] = loaded_file["stop_words"]
-
-        # prompt parameters
-        # self.tool_prompt: str = loaded_file["tool_prompt"]
-        # self.use_tools: bool = bool(loaded_file["use_tools"])
-
         # langfuse parameters (optional)
         self.langfuse_url: str = loaded_file["langfuse_url"]
         self.langfuse_public_key: str = loaded_file["langfuse_public_key"]
@@ -51,23 +40,15 @@ class Config:
             self.models[model_name] = ModelDefinition(
                 description=model_props.get("description", ""),
                 vision=model_props.get("vision", False),
-                reasoning=model_props.get("reasoning", False),
-                enforce_reasoning=model_props.get("enforce_reasoning", False))
-
-
-        # prompt parameters
-        self.reasoning_system_prompt: str = loaded_file["reasoning_system_prompt"]
-        self.reasoning_start_tag: str = loaded_file["reasoning_start_tag"]
-        self.reasoning_end_tag: str = loaded_file["reasoning_end_tag"]
-
-        # self.image_generation_enabled: str = loaded_file["image_generation_enabled"]
-        # self.image_generation_system_prompt: str = loaded_file["image_generation_system_prompt"]
+                reasoning=model_props.get("reasoning", False))
 
         # tool APIs
         self.tavily_api_key: str = loaded_file["tavily_api_key"]
 
         # image 
         self.image_generation_api_base_url: str = loaded_file["image_generation_api_base_url"]
+        self.image_generation_enabled: str = loaded_file["image_generation_enabled"]
+
         self.image_maximum_pixels: int = loaded_file["image_maximum_pixels"]
         self.image_default_height: str = loaded_file["image_default_height"]
         self.image_default_width: str = loaded_file["image_default_width"]
