@@ -17,7 +17,7 @@ from synthea.CharactersDatabase import CharactersDatabase
 from synthea.CommandParser import ChatbotParser, ParsedArgs, ParserExitedException
 from config import Config
 from synthea.ContextManager import ContextManager
-from synthea.ImageModel import ImageModel
+from synthea.image_generation import ImageModel
 from synthea.model import Model
 from synthea.ModelDefinition import ModelDefinition
 from synthea.agentic_model import AgenticModel
