@@ -17,7 +17,7 @@ import openai
 from synthea import memory
 from synthea.CommandParser import ParsedArgs
 from config import Config
-from synthea.ImageModel import ImageModel
+from synthea.image_generation import ImageModel
 from synthea.model import Model
 from synthea.dtos.GenerationResponse import GenerationResponse
 
