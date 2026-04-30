@@ -21,7 +21,7 @@ from synthea.ImageModel import ImageModel
 from synthea.model import Model
 from synthea.dtos.GenerationResponse import GenerationResponse
 
-from ToolUtilities import inference_logger
+from synthea.utilities import inference_logger
 
 import os
 from langfuse.langchain import CallbackHandler

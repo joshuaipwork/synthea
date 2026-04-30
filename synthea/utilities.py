@@ -1,3 +1,58 @@
+import ast
+import os
+import re
+import json
+import logging
+import datetime
+import xml.etree.ElementTree as ET
+
+from logging.handlers import RotatingFileHandler
+
+from synthea.exceptions import InvalidImageDimensionsException
+
+logging.basicConfig(
+    format="%(asctime)s,%(msecs)03d %(levelname)-8s [%(filename)s:%(lineno)d] %(message)s",
+    datefmt="%Y-%m-%d:%H:%M:%S",
+    level=logging.INFO,
+)
+script_dir = os.path.dirname(os.path.abspath(__file__))
+now = datetime.datetime.now()
+log_folder = os.path.join(script_dir, "inference_logs")
+os.makedirs(log_folder, exist_ok=True)
+log_file_path = os.path.join(
+    log_folder, f"function-calling-inference_{now.strftime('%Y-%m-%d_%H-%M-%S')}.log"
+)
+# Use RotatingFileHandler from the logging.handlers module
+file_handler = RotatingFileHandler(log_file_path, maxBytes=0, backupCount=0)
+file_handler.setLevel(logging.INFO)
+
+formatter = logging.Formatter("%(asctime)s,%(msecs)03d %(levelname)-8s [%(filename)s:%(lineno)d] %(message)s", datefmt="%Y-%m-%d:%H:%M:%S")
+file_handler.setFormatter(formatter)
+
+inference_logger = logging.getLogger("function-calling-inference")
+inference_logger.addHandler(file_handler)
+
+def parse_dimensions(self, dimensions: str) -> tuple[int, int]:
+    """
+    Parses a dimension string of the form '1000x1000' into a width and height,
+    applying the limitations of the ComfyUI empty latent image node.
+    """
+    values = dimensions.split('x')
+    if len(values) != 2:
+        raise InvalidImageDimensionsException(f"Couldn't parse '{dimensions}' into a width and height")
+
+    width, height = int(values[0]), int(values[1])
+
+    if width < 16 or height < 16:
+        raise InvalidImageDimensionsException(f"Invalid dimensions {dimensions} - minimum size is 16x16")
+    if width > 16384 or height > 16384:
+        raise InvalidImageDimensionsException(f"Invalid dimensions {dimensions} - maximum size is 16384x16384")
+    if width * height > self.config.image_maximum_pixels:
+        raise InvalidImageDimensionsException(
+            f"Dimensions {dimensions} exceed the maximum pixel count of {self.config.image_maximum_pixels}")
+
+    return width, height
+
 def split_text(text, max_length=1800) -> list[str]:
     return [text[i:i+max_length] for i in range(0, len(text), max_length)]
 
