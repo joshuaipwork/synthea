@@ -20,7 +20,7 @@ from config import Config
 
 from synthea.utilities import inference_logger
 
-from synthea.model import ModelDefinition
+from synthea.model_definition import ModelDefinition
 class ReplyChainIterator:
     """
     An async iterator which follows a chain of discord message replies until it reaches the end

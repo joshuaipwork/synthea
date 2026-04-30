@@ -6,16 +6,6 @@ from synthea.CommandParser import ParsedArgs
 from synthea.dtos.GenerationResponse import GenerationResponse
 from langchain_core.messages import BaseMessage
 from openai.types import Model
-from dataclasses import dataclass
-
-@dataclass
-class ModelDefinition:
-    """
-    A simple class for storing and loading model definitions
-    """
-    description: str
-    vision: bool
-    reasoning: bool
 
 class Model:
     @abstractmethod
