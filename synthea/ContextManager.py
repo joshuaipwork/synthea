@@ -18,7 +18,7 @@ from synthea.CommandParser import ChatbotParser, ParsedArgs
 from synthea import SyntheaClient
 from config import Config
 
-from ToolUtilities import inference_logger
+from synthea.utilities import inference_logger
 
 from synthea.ModelDefinition import ModelDefinition
 class ReplyChainIterator:
