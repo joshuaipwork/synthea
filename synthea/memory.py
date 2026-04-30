@@ -1,6 +1,6 @@
 from typing import Any
 
-from mem0 import Memory
+from mem0 import AsyncMemory
 
 from synthea.config import Config
 
@@ -40,11 +40,11 @@ def create_config(llm_model: str, embedding_model: str):
     return config
 
 
-def retrieve_relevant_memories(messages: list[BaseMessage], model_name: str) -> str:
+async def retrieve_relevant_memories(messages: list[BaseMessage], model_name: str) -> str:
     """
     From a list of messages, retrieves a list of relevant memories about the last user from mem0
     """
-    memory = Memory.from_config(create_config(model_name, model_name))
+    memory = await AsyncMemory.from_config(create_config(model_name, model_name))
     user_turns: list[HumanMessage] = [msg for msg in messages if isinstance(msg, HumanMessage)]
 
     # get the user id from the last user
@@ -53,7 +53,7 @@ def retrieve_relevant_memories(messages: list[BaseMessage], model_name: str) -> 
     user_content = extract_text(user_turns[-1].content)
 
     # retrieve the memories from the last user
-    relevant_memories = memory.search(query=user_content, user_id=user_id, limit=5)
+    relevant_memories = await memory.search(query=user_content, user_id=user_id, limit=5)
 
     memory_context = "\n".join(
         f"- {m['memory']}" for m in relevant_memories.get("results", [])
@@ -62,12 +62,12 @@ def retrieve_relevant_memories(messages: list[BaseMessage], model_name: str) -> 
     return memory_context
 
 
-def add_memories(messages: list[BaseMessage], model_name: str) -> str:
+async def add_memories(messages: list[BaseMessage], model_name: str) -> str:
     """
     From a list of messages, save information to a list of memories about the last user
     from their own messages.
     """
-    memory = Memory.from_config(create_config(model_name, model_name))
+    memory = await AsyncMemory.from_config(create_config(model_name, model_name))
 
     # filter the messages down to only human messages to avoid stuffing the context
     user_turns = [msg for msg in messages if isinstance(msg, HumanMessage)]
@@ -82,7 +82,7 @@ def add_memories(messages: list[BaseMessage], model_name: str) -> str:
         if turn.name == user_id
     ]
 
-    memories = memory.add(
+    memories = await memory.add(
         user_messages,
         user_id=user_id,
         prompt="Here are the last couple messages from a user. Extract factual information about the user from their messages. Ignore anything the user says about other users or any AI assistants. Focus on: the user's possessions, preferences, problems, goals, and personal context.",
@@ -98,18 +98,18 @@ def extract_text(content) -> str:
         )
     return content
 
-def get_user_memories(user_id) -> list[dict[str, Any]]:
-    memory = Memory.from_config(create_config(
+async def get_user_memories(user_id) -> list[dict[str, Any]]:
+    memory = await AsyncMemory.from_config(create_config(
         bot_config.default_model_name, bot_config.default_model_name))
     
-    result = memory.get_all(user_id=user_id)
+    result = await memory.get_all(user_id=user_id)
     return result.get("results", [])
 
-def clear_user_memory(user_id: str, persona=None):
-    memory = Memory.from_config(create_config(
+async def clear_user_memory(user_id: str, persona=None):
+    memory = await AsyncMemory.from_config(create_config(
         bot_config.default_model_name, bot_config.default_model_name))
 
     if persona:
-        memory.delete_all(user_id=user_id, agent_id=persona)
+        await memory.delete_all(user_id=user_id, agent_id=persona)
     else:
-        memory.delete_all(user_id=user_id)
+        await memory.delete_all(user_id=user_id)

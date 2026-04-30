@@ -44,9 +44,9 @@ def format_model_list(model_list: list[openai.types.model.Model]) -> str:
         model_definition: ModelDefinition = config.models[model.id]
         output += f'\n{model.id}   '
         if model_definition.vision:
-            output += f' 👀'
+            output += ' 👀'
         if model_definition.reasoning:
-            output += f' 🤔'
+            output += ' 🤔'
         if model_definition.description:
             output += f'\n> {model_definition.description}'
     return output

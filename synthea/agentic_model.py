@@ -86,7 +86,7 @@ class AgenticModel(Model):
         Retrieves memories from mem0 related to the conversation
         """
         try:
-            memories: str = memory.retrieve_relevant_memories(
+            memories: str = await memory.retrieve_relevant_memories(
                 messages=state["messages"],
                 model_name=state["model"])
             return {"memories": memories}
@@ -99,7 +99,7 @@ class AgenticModel(Model):
         Saves memories related to a conversation to mem0
         """
         try:
-            memory.add_memories(
+            await memory.add_memories(
                 messages=state["messages"],
                 model_name=state["model"])
             return {}
@@ -112,8 +112,7 @@ class AgenticModel(Model):
                                
         This chat may include multiple users. Each message includes the user's name at the start, followed by a colon.  
 
-        Current time: {state["current_time"]} \n \
-        Day of week: {state["day_of_week"]} \n \
+        Current time: {state["current_time"]} ({state["day_of_week"]}) \n \
         What you remember about the user who sent the last message:\n {state["memories"] if "memories" in state and state["memories"] else 'Nothing yet.'}
         """)
         response = await self.llm.ainvoke([system] + state["messages"], config)
