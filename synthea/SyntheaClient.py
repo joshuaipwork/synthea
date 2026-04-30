@@ -18,7 +18,7 @@ from synthea.CommandParser import ChatbotParser, ParsedArgs, ParserExitedExcepti
 from config import Config
 from synthea.ContextManager import ContextManager
 from synthea.ImageModel import ImageModel
-from synthea.Model import Model
+from synthea.model import Model
 from synthea.ModelDefinition import ModelDefinition
 from synthea.agentic_model import AgenticModel
 from synthea.dtos.GenerationResponse import GenerationResponse
@@ -130,7 +130,6 @@ class SyntheaClient(discord.Client):
         # TODO: Figure out how to distinguish webhooks made by me from webhooks made by someone else
         # TODO: Don't delete messages if the webhook was made by someone else.
         if user != self.user and reaction.message.author.id == self.user.id:
-            responded_message = reaction.message
             if reaction.emoji == "🗑️":
                 await reaction.message.delete()
             # if reaction.emoji == "🛑":
@@ -184,10 +183,6 @@ class SyntheaClient(discord.Client):
                     message_invokes_chatbot = True
             except (discord.NotFound, discord.HTTPException, discord.Forbidden) as exc:
                 CLIENT_LOGGER.error(exc)
-            character_replied_to = await self._get_character_replied_to(message)
-            if character_replied_to:
-                # check if this webhook represents a character that the chatbot adopted
-                message_invokes_chatbot = True
 
         if not message_invokes_chatbot:
             return
@@ -219,25 +214,33 @@ class SyntheaClient(discord.Client):
             message (str): The message to respond to
         """
         config: Config = Config()
+        context_manager = ContextManager(self.user.id)
 
+        # 1. Figure out what parameters we are generating with
+        args: ParsedArgs = None
         # Deal with the case that the user made a command in this message
-        command: str = message_from_user.clean_content
-        parser: ChatbotParser = ChatbotParser()
-        try:
-            args: ParsedArgs = parser.parse(command)
-        except ParserExitedException as e:
-            await message_from_user.reply(e.message)           
-            return
+        if message_from_user.clean_content.startswith(config.command_start_str):
+            try:
+                command: str = message_from_user.clean_content
+                parser: ChatbotParser = ChatbotParser()
+                args = parser.parse(command)
+            except ParserExitedException as e:
+                await message_from_user.reply(e.message)           
+                return
+        # otherwise, read the history to find the current applicable command
+        else:
+            args = await context_manager.get_args_from_chat_history(message_from_user)
 
+        # 2: Run a utility command if one was present
         # if the user wants to use this as the system prompt going forward, just
         # give them a checkmark and wait for further prompts
-        if args.use_as_system_prompt:
+        if args and args.use_as_system_prompt:
             await self.send_response_as_system("Conversation started...", message_from_user)
             return
         
         # if the user just wants to create an image, just create an image and
         # ignore the LLM
-        if args.use_image_model:
+        if args and args.use_image_model:
             response: GenerationResponse = GenerationResponse()
             start_time = datetime.now()
 
@@ -254,27 +257,19 @@ class SyntheaClient(discord.Client):
             await self.send_response_as_base(response, message_from_user)
             return
 
-        # read the history to find the current applicable command
-        context_manager = ContextManager(self.user.id)
-        args = await context_manager.get_args_from_chat_history(message_from_user)
-
+        # 3: Set the system prompt
         char_id: str = args.character
         model: Model = self.llm
         model_definition: ModelDefinition = config.models[args.model.lower() if args.model else config.default_model_name]
         system_prompt: str = self._generate_system_prompt(args, model_definition)
 
-        # if the user responded to the bot playing a character, respond as that character
-        replied_char_id = await self._get_character_replied_to(message_from_user)
-        if replied_char_id:
-            char_id = replied_char_id
-
-        # TODO: Deprecate dry_run
-        # if (args.dry_run):
-        #     buffer = BytesIO(self.format_chat_messages(chat_history, args).encode())
-        #     dry_run_file: discord.File = discord.File(buffer, filename=ContextManager.REASONING_TXT_FILE_NAME)
-        #     await self.send_response(message_to_reply=message_from_user, files=[dry_run_file])
-        #     return
+        # TODO: Deprecated, you can infer this from the most recent command
+        # # if the user responded to the bot playing a character, respond as that character
+        # replied_char_id = await self._get_character_replied_to(message_from_user)
+        # if replied_char_id:
+        #     char_id = replied_char_id
         
+        # if a character was invoked, check that the user can use that character
         if char_id and char_id != SYSTEM_TAG:
             can_access = self.char_db.can_access_character(
                 char_id=char_id,
@@ -293,11 +288,13 @@ class SyntheaClient(discord.Client):
                 system_prompt += "\n\n Here are some examples of how to speak:\n"
                 system_prompt += char_data["example_messages"]
 
+        # 4: Generate the response 
         chat_history, _ = await context_manager.generate_chat_history_from_chat(message_from_user, model_definition=model_definition)
         response: GenerationResponse = await model.queue_for_generation(
             chat_history, args=args, persona_system_prompt=system_prompt)
         response.final_output = self._preprocess_final_output(response.final_output)
-        
+
+        # TODO: DEPRECATED, image generation is agentic, not using image tags        
         # # check for image generation tags, and generate an image if so
         # if ("<image>" in response.final_output and "</image>" in response.final_output):
         #     image_prompt: str = re.search(r'<image>(.*?)</image>', response.final_output, re.DOTALL).group(1)
@@ -308,6 +305,7 @@ class SyntheaClient(discord.Client):
         #             response.images.append(image_data)
         #     response.reasoning += f"\nIMAGE PROMPT: {image_prompt}"
 
+        # 5: Send the final response
         if char_id and char_id != SYSTEM_TAG:
             CLIENT_LOGGER.info(f"Responded to {message_from_user.author} with char {char_id}")
             CLIENT_LOGGER.info(response)
@@ -324,8 +322,8 @@ class SyntheaClient(discord.Client):
         final_output = re.sub(r'Message from \".*?\":\n', '', final_output)
         if final_output.lower().startswith(f"Message from {self.config.bot_name}".lower()):
             final_output = final_output[len(f"Message from {self.config.bot_name}"):]
-        if final_output.lower().startswith(f"Message from Syn".lower()):
-            final_output = final_output[len(f"Message from Syn"):]
+        if final_output.lower().startswith("Message from Syn".lower()):
+            final_output = final_output[len("Message from Syn"):]
 
         # remove roleplay chat tags
         # This regex now uses a capture group to match the rest of the line
@@ -338,10 +336,10 @@ class SyntheaClient(discord.Client):
         if len(final_output) > DISCORD_EMBED_LIMIT:
             final_output = final_output[:DISCORD_EMBED_LIMIT]
 
-        # remove stop words at end
-        for stop_word in self.config.stop_words:
-            if final_output.endswith(stop_word):
-                final_output = final_output[:len(final_output)-len(stop_word)]
+        # # remove stop words at end
+        # for stop_word in self.config.stop_words:
+        #     if final_output.endswith(stop_word):
+        #         final_output = final_output[:len(final_output)-len(stop_word)]
         return final_output
 
     async def send_response_as_base(self, response: GenerationResponse, message: discord.Message):
@@ -447,42 +445,43 @@ class SyntheaClient(discord.Client):
             await bot_message.add_reaction("🗑️")
             await bot_message.add_reaction("🔁")
 
-    async def _get_character_replied_to(self, message: discord.Message) -> str | None:
-        """
-        Determines if a user replied to a character.
+    # TODO: DEPRECATED, character can be inferred from the latest command 
+    # async def _get_character_replied_to(self, message: discord.Message) -> str | None:
+    #     """
+    #     Determines if a user replied to a character.
 
-        Args:
-            message (discord.Message): The message the user sent.
-        Returns:
-            (str, optional): The id of the character who sent the message the user replied to.
-                If there is no character or this message is not a reply, returns None instead
-        """
-        # if the bot was invoked without replying to a message, no character was replied to.
-        if not message.reference:
-            return None
+    #     Args:
+    #         message (discord.Message): The message the user sent.
+    #     Returns:
+    #         (str, optional): The id of the character who sent the message the user replied to.
+    #             If there is no character or this message is not a reply, returns None instead
+    #     """
+    #     # if the bot was invoked without replying to a message, no character was replied to.
+    #     if not message.reference:
+    #         return None
 
-        try:
-            # bot uses embeds to speak as a character
-            replied_message: discord.Message = await message.channel.fetch_message(
-                message.reference.message_id
-            )
+    #     try:
+    #         # bot uses embeds to speak as a character
+    #         replied_message: discord.Message = await message.channel.fetch_message(
+    #             message.reference.message_id
+    #         )
 
-            # if no embed, it wasn't speaking as a character
-            if (
-                not replied_message.embeds
-                or not replied_message.author.id == self.user.id
-            ):
-                return None
-            embed = replied_message.embeds[0]
+    #         # if no embed, it wasn't speaking as a character
+    #         if (
+    #             not replied_message.embeds
+    #             or not replied_message.author.id == self.user.id
+    #         ):
+    #             return None
+    #         embed = replied_message.embeds[0]
 
-            # ids are embedded in the footer, so retrieve that
-            return embed.footer.text
+    #         # ids are embedded in the footer, so retrieve that
+    #         return embed.footer.text
 
-        # if we can't retrieve the replied message (maybe deleted), just say no char
-        except (discord.NotFound, discord.HTTPException, discord.Forbidden) as exc:
-            print(exc)
+    #     # if we can't retrieve the replied message (maybe deleted), just say no char
+    #     except (discord.NotFound, discord.HTTPException, discord.Forbidden) as exc:
+    #         print(exc)
 
-        return None
+    #     return None
 
     def convert_generation_response_to_files(self, response: GenerationResponse) -> list[discord.File]: 
         """
@@ -491,7 +490,7 @@ class SyntheaClient(discord.Client):
         """
         files: list[discord.File] = []
         if (response.reasoning):
-            CLIENT_LOGGER.info(f"Appending reasoning file to the message.")
+            CLIENT_LOGGER.info("Appending reasoning file to the message.")
             buffer = BytesIO(response.reasoning.encode())
             reasoning_file: discord.File = discord.File(buffer, filename=ContextManager.REASONING_TXT_FILE_NAME)
             files.append(reasoning_file)
@@ -521,8 +520,8 @@ class SyntheaClient(discord.Client):
 
         # if model_definition.reasoning:
         #     system_prompt += f"{self.config.reasoning_system_prompt}\n"
-        if self.config.image_generation_enabled:
-            system_prompt += f"{self.config.image_generation_system_prompt}\n"
+        # if self.config.image_generation_enabled:
+        #     system_prompt += f"{self.config.image_generation_system_prompt}\n"
 
         return system_prompt
     
