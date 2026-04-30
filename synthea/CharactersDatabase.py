@@ -1,7 +1,7 @@
 import re
 import sqlite3
 from typing import Any, Optional
-from .character_errors import *
+from character_errors import CharacterNotFoundError, DuplicateCharacterError, InvalidCharacterIDError, ForbiddenCharacterError
 
 conn = sqlite3.connect("mydata.db")
 
