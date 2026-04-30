@@ -1,3 +1,5 @@
+from typing import Any
+
 from mem0 import Memory
 
 from synthea.config import Config
@@ -38,9 +40,9 @@ def create_config(llm_model: str, embedding_model: str):
     return config
 
 
-def retrieve_memories(messages: list[BaseMessage], model_name: str) -> str:
+def retrieve_relevant_memories(messages: list[BaseMessage], model_name: str) -> str:
     """
-    From a list of messages, retrieves a list of memories about the last user from mem0
+    From a list of messages, retrieves a list of relevant memories about the last user from mem0
     """
     memory = Memory.from_config(create_config(model_name, model_name))
     user_turns: list[HumanMessage] = [msg for msg in messages if isinstance(msg, HumanMessage)]
@@ -95,6 +97,13 @@ def extract_text(content) -> str:
             if isinstance(block, dict) and block.get("type") == "text"
         )
     return content
+
+def get_user_memories(user_id) -> list[dict[str, Any]]:
+    memory = Memory.from_config(create_config(
+        bot_config.default_model_name, bot_config.default_model_name))
+    
+    result = memory.get_all(user_id=user_id)
+    return result.get("results", [])
 
 def clear_user_memory(user_id: str, persona=None):
     memory = Memory.from_config(create_config(

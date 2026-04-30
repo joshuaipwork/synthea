@@ -86,7 +86,7 @@ class AgenticModel(Model):
         Retrieves memories from mem0 related to the conversation
         """
         try:
-            memories: str = memory.retrieve_memories(
+            memories: str = memory.retrieve_relevant_memories(
                 messages=state["messages"],
                 model_name=state["model"])
             return {"memories": memories}
