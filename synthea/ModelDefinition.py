@@ -1,8 +1,5 @@
 from dataclasses import dataclass
 
-from synthea import ModelFormatDefinition
-
-
 @dataclass
 class ModelDefinition:
     """
@@ -12,4 +9,3 @@ class ModelDefinition:
     vision: bool
     reasoning: bool
     enforce_reasoning: bool
-    template: ModelFormatDefinition
