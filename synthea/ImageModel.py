@@ -5,7 +5,6 @@ import asyncio
 import requests
 
 from config import Config
-from synthea.exceptions import InvalidImageDimensionsException
 
 config = Config()
 client_id = str(uuid.uuid4())
