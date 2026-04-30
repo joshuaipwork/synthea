@@ -100,7 +100,6 @@ class ParsedArgs:
     use_as_system_prompt: bool = False
     use_image_model: bool = False
     prompt: str = None
-    dry_run: bool = False
     model: str = None
     dimensions: str = None
     image_width: str = None
@@ -156,14 +155,6 @@ class ChatbotParser:
             default=None,
             dest="use_as_system_prompt",
             help="Save the prompt text as the system prompt for the remainder of the reply chain.",
-        )
-        self.parser.add_argument(
-            "-dry",
-            "--dry-run",
-            default=None,
-            action="store_true",
-            dest="dry_run",
-            help="If passed, return the final prompt, rather than the bot's response.",
         )
         self.parser.add_argument(
             "-m",
