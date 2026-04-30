@@ -10,7 +10,7 @@ import yaml
 
 from config import Config
 from synthea import memory
-from synthea.ModelDefinition import ModelDefinition
+from synthea.model import ModelDefinition
 from synthea.SyntheaClient import SyntheaClient
 from synthea.modals.CharCreationView import CharCreationView
 from synthea.modals.UpdateCharModal import UpdateCharModal

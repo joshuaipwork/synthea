@@ -19,7 +19,7 @@ from config import Config
 from synthea.ContextManager import ContextManager
 from synthea.image_generation import ImageModel
 from synthea.model import Model
-from synthea.ModelDefinition import ModelDefinition
+from synthea.model import ModelDefinition
 from synthea.agentic_model import AgenticModel
 from synthea.dtos.GenerationResponse import GenerationResponse
 from synthea.character_errors import (
@@ -517,11 +517,6 @@ class SyntheaClient(discord.Client):
             system_prompt = args.prompt
             # if using a custom system prompt, don't alter it in any way
             return system_prompt
-
-        # if model_definition.reasoning:
-        #     system_prompt += f"{self.config.reasoning_system_prompt}\n"
-        # if self.config.image_generation_enabled:
-        #     system_prompt += f"{self.config.image_generation_system_prompt}\n"
 
         return system_prompt
     
