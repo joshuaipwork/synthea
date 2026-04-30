@@ -1,6 +1,5 @@
 import yaml
 
-from synthea.ModelFormatDefinition import ModelFormatDefinition
 from synthea.ModelDefinition import ModelDefinition
 
 class Config:
@@ -18,18 +17,17 @@ class Config:
         self.command_start_str: str = loaded_file["command_start_str"]
         self.system_prompt: str = loaded_file["system_prompt"]
         self.bot_name: str = loaded_file["bot_name"]
-        self.chat_template: str = loaded_file["chat_template"]
 
         # generation parameters
         self.temperature: float = loaded_file["temperature"]
         self.presence_penalty: float = loaded_file["presence_penalty"]
         self.frequency_penalty: float = loaded_file["frequency_penalty"]
         self.top_p: float = loaded_file["top_p"]
-        self.stop_words: list[str] = loaded_file["stop_words"]
+        # self.stop_words: list[str] = loaded_file["stop_words"]
 
         # prompt parameters
-        self.tool_prompt: str = loaded_file["tool_prompt"]
-        self.use_tools: bool = bool(loaded_file["use_tools"])
+        # self.tool_prompt: str = loaded_file["tool_prompt"]
+        # self.use_tools: bool = bool(loaded_file["use_tools"])
 
         # langfuse parameters (optional)
         self.langfuse_url: str = loaded_file["langfuse_url"]
@@ -49,21 +47,12 @@ class Config:
             # Get the model properties (the only value)
             model_props = list(model.values())[0]
 
-            format: ModelFormatDefinition = None
-            if "format" in model_props:
-                format = ModelFormatDefinition(
-                    reasoning_start_tag=model_props["format"]["reasoning_start_tag"],
-                    reasoning_end_tag=model_props["format"]["reasoning_end_tag"],
-                    solution_start_tag=model_props["format"]["solution_start_tag"],
-                    solution_end_tag=model_props["format"]["solution_end_tag"])
-
             # Create ModelDefinition from the properties
             self.models[model_name] = ModelDefinition(
                 description=model_props.get("description", ""),
                 vision=model_props.get("vision", False),
                 reasoning=model_props.get("reasoning", False),
-                enforce_reasoning=model_props.get("enforce_reasoning", False),
-                template=format)
+                enforce_reasoning=model_props.get("enforce_reasoning", False))
 
 
         # prompt parameters
@@ -71,8 +60,8 @@ class Config:
         self.reasoning_start_tag: str = loaded_file["reasoning_start_tag"]
         self.reasoning_end_tag: str = loaded_file["reasoning_end_tag"]
 
-        self.image_generation_enabled: str = loaded_file["image_generation_enabled"]
-        self.image_generation_system_prompt: str = loaded_file["image_generation_system_prompt"]
+        # self.image_generation_enabled: str = loaded_file["image_generation_enabled"]
+        # self.image_generation_system_prompt: str = loaded_file["image_generation_system_prompt"]
 
         # tool APIs
         self.tavily_api_key: str = loaded_file["tavily_api_key"]

@@ -5,7 +5,7 @@ message history and persona.
 """
 import base64
 import mimetypes
-from typing import AsyncIterator, Optional
+from typing import AsyncIterator
 from urllib.parse import urlparse
 import discord
 from langchain.messages import AIMessage, HumanMessage
@@ -112,7 +112,6 @@ class ContextManager:
         """
         history_iterator: ReplyChainIterator = ReplyChainIterator(message)
         config = Config()
-        last_command_args: ParsedArgs | None = None
 
         # retrieve as many tokens as can fit into the context length from history
         async for message in history_iterator:
@@ -183,9 +182,6 @@ class ContextManager:
                 text = message_args.prompt
                 added_tokens = len(message_args.prompt) // self.EST_CHARS_PER_TOKEN
 
-            # add the username
-            self._inject_username(message, text)
-
             # skip messages that were created by the system
             if message.author.id == self.bot_user_id and message.embeds and message.embeds[0].footer.text == SyntheaClient.SYSTEM_TAG:
                 continue
@@ -197,6 +193,10 @@ class ContextManager:
             # stop retrieving context if the context would overflow
             if added_tokens + token_count > history_token_limit:
                 break
+
+            # add the username to the text for multi-user multi-turn conversations
+            user_id, user_display_name = self._get_message_sender_details(message)
+            text = f"{user_display_name}: {text}"
 
             # convert the text and any other content in the field to a list
             # for processing
@@ -211,9 +211,9 @@ class ContextManager:
 
             # update the list of messages with this message
             if message.author.id == self.bot_user_id:
-                chat_messages.insert(0, AIMessage(content=content))
+                chat_messages.insert(0, AIMessage(content=content, name=str(user_id)))
             else:
-                chat_messages.insert(0, HumanMessage(content=content))
+                chat_messages.insert(0, HumanMessage(content=content, name=str(user_id)))
             
             token_count += added_tokens
 
@@ -232,7 +232,6 @@ class ContextManager:
             ("text", "This is the content of the PDF")
             ("image_url", "https://images.freeimages.com/images/large-previews/cd7/gingko-biloba-1058537.jpg")
         """
-        config = Config()
         openai_content_type = ""
         attachment_string = ""
         attachment_bytes = await attachment.read()
@@ -275,7 +274,7 @@ class ContextManager:
 
     async def _get_content(self, message: discord.Message, model_definition: ModelDefinition, remaining_tokens: int, read_attachments: bool=False) -> tuple[list[dict[str, str]], int]:
         """
-        Gets the text from a message and counts the tokens.
+        Gets the text and attachments from a message and counts the tokens.
         """
         contents: list[dict[str, str]] = []
         tokens = 0
@@ -323,21 +322,25 @@ class ContextManager:
                 text += entry["text"]
         return text
 
-    def _inject_username(self, message: discord.Message, text: str):
+    def _get_message_sender_details(self, message: discord.Message) -> tuple[str, str]:
         """
-        Updates text to include the username of the person sending the message
+        Gets the user ID and display name of the person sending the message
+
+        Returns:
+            a tuple of the id and display_name
         """
-        # inject the character's name if they are a character
+        # get the character's name if they are a character
         if message.author.id == self.bot_user_id and message.embeds and message.embeds[0].footer and message.embeds[0].footer.text != SyntheaClient.SYSTEM_TAG:
-            char_data: dict[str, str] = self.characters_database.load_character(message.embeds[0].footer.text)                
-            text = f"[{char_data["display_name"]}]: " + text
+            char_id: str = message.embeds[0].footer.text
+            char_data: dict[str, str] = self.characters_database.load_character(message.embeds[0].footer.text)
+            return char_id, char_data["display_name"]
         # inject You if no character is specified
         elif message.author.id == self.bot_user_id:
-            text = f"[You]: " + text
+            return self.bot_user_id, "You"
             # TODO: Figure out how to square this with -sp
         # if another user inject the user's name into the prompt so the bot knows it
         else:
-            text = f"[{message.author.display_name}]: " + text
+            return message.author.id, message.author.display_name
 
     def image_to_base64(self, image_path):
         """

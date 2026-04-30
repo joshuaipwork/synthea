@@ -9,6 +9,7 @@ import openai
 import yaml
 
 from config import Config
+from synthea import memory
 from synthea.ModelDefinition import ModelDefinition
 from synthea.SyntheaClient import SyntheaClient
 from synthea.modals.CharCreationView import CharCreationView
@@ -209,5 +210,15 @@ if __name__ == "__main__":
         """Sends a list of available models to the interacter"""
         model_list: List[openai.types.model.Model] = await client.get_models()
         await interaction.response.send_message(format_model_list(model_list), ephemeral=True)
+
+
+    @tree.command(
+        name="erase_memory",
+        description="Erases the bot's memories about you.",
+    )
+    async def erase_memory(interaction: discord.Interaction):
+        """Sends a list of available models to the interacter"""
+        memory.clear_user_memory(str(interaction.user.id))
+        await interaction.response.send_message("The memory about you has been cleared.", ephemeral=True)
 
     client.run(token)

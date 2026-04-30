@@ -13,3 +13,4 @@ langchain-tavily
 langfuse
 mem0ai
 websockets
+chromadb>=1.5.8

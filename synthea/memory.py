@@ -1,34 +1,106 @@
-# from mem0 import Memory
+from mem0 import Memory
 
-# config = {
-#     "vector_store": {
-#         "provider": "chroma",
-#         "config": {
-#             "collection_name": "agent_memories",
-#             "path": "./chroma_db",        # local persistent path
-#             # Or for a remote Chroma server:
-#             # "host": "localhost",
-#             # "port": 8000,
-#         }
-#     },
-#     "llm": {
-#         "provider": "openai",             # mem0 uses openai-compat provider
-#         "config": {
-#             "model": "local-model",       # can be any string; llama-server ignores it
-#             "openai_base_url": "http://localhost:8080/v1",
-#             "api_key": "not-needed",      # required by client but unused
-#             "temperature": 0.1,
-#             "max_tokens": 2000,
-#         }
-#     },
-#     "embedder": {
-#         "provider": "openai",             # llama-server also serves /v1/embeddings
-#         "config": {
-#             "model": "local-model",
-#             "openai_base_url": "http://localhost:8080/v1",
-#             "api_key": "not-needed",
-#         }
-#     }
-# }
+from synthea.config import Config
 
-# memory = Memory.from_config(config)
+from langchain_core.messages import BaseMessage, HumanMessage
+import os
+
+bot_config = Config()
+os.environ["OPENAI_API_KEY"] = bot_config.api_key
+
+def create_config(llm_model: str, embedding_model: str):
+    config = {
+        "llm": {
+            "provider": "openai",
+            "config": {
+                "model": llm_model,
+                "api_key": bot_config.api_key,
+                "openai_base_url": bot_config.api_base_url,
+            },
+        },
+        "embedder": {
+            "provider": "openai",
+            "config": {
+                "model": embedding_model,
+                "api_key": bot_config.api_key,
+                "openai_base_url": bot_config.api_base_url,
+            },
+        },
+        "vector_store": {
+            "provider": "chroma",
+            "config": {
+                "collection_name": f"chatbot_memories-{embedding_model}",
+                "path": "./chroma_db",  # just a local folder
+            },
+        },
+    }
+
+    return config
+
+
+def retrieve_memories(messages: list[BaseMessage], model_name: str) -> str:
+    """
+    From a list of messages, retrieves a list of memories about the last user from mem0
+    """
+    memory = Memory.from_config(create_config(model_name, model_name))
+    user_turns: list[HumanMessage] = [msg for msg in messages if isinstance(msg, HumanMessage)]
+
+    # get the user id from the last user
+    user_id = user_turns[-1].name
+    # user_content = [turn.content for turn in user_turns]
+    user_content = extract_text(user_turns[-1].content)
+
+    # retrieve the memories from the last user
+    relevant_memories = memory.search(query=user_content, user_id=user_id, limit=5)
+
+    memory_context = "\n".join(
+        f"- {m['memory']}" for m in relevant_memories.get("results", [])
+    )
+
+    return memory_context
+
+
+def add_memories(messages: list[BaseMessage], model_name: str) -> str:
+    """
+    From a list of messages, save information to a list of memories about the last user
+    from their own messages.
+    """
+    memory = Memory.from_config(create_config(model_name, model_name))
+
+    # filter the messages down to only human messages to avoid stuffing the context
+    user_turns = [msg for msg in messages if isinstance(msg, HumanMessage)]
+
+    # get the user id from the last user
+    user_id = user_turns[-1].name
+
+    # filter the messages down to only the messages from the last user
+    user_messages = [
+        {"role": "user", "content": extract_text(turn.content)}
+        for turn in user_turns
+        if turn.name == user_id
+    ]
+
+    memories = memory.add(
+        user_messages,
+        user_id=user_id,
+        prompt="Here are the last couple messages from a user. Extract factual information about the user from their messages. Ignore anything the user says about other users or any AI assistants. Focus on: the user's possessions, preferences, problems, goals, and personal context.",
+    )
+
+    return memories
+
+def extract_text(content) -> str:
+    if isinstance(content, list):
+        return " ".join(
+            block["text"] for block in content
+            if isinstance(block, dict) and block.get("type") == "text"
+        )
+    return content
+
+def clear_user_memory(user_id: str, persona=None):
+    memory = Memory.from_config(create_config(
+        bot_config.default_model_name, bot_config.default_model_name))
+
+    if persona:
+        memory.delete_all(user_id=user_id, agent_id=persona)
+    else:
+        memory.delete_all(user_id=user_id)
