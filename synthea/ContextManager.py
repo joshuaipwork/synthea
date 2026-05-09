@@ -4,11 +4,13 @@ Generate a prompt for the AI to respond to, given the
 message history and persona.
 """
 import base64
+from dataclasses import dataclass
 import mimetypes
 from typing import AsyncIterator
 from urllib.parse import urlparse
 import discord
 from langchain.messages import AIMessage, HumanMessage
+from langchain_core.messages import BaseMessage
 import pypdf
 import os
 import requests
@@ -21,6 +23,24 @@ from config import Config
 from synthea.utilities import inference_logger
 
 from synthea.model_definition import ModelDefinition
+
+@dataclass
+class ChatHistory:
+    """
+    A class representing the state of a chat log. 
+    """
+    # the list of cleaned messages in the chat, ordered from earliest to latest 
+    messages: list[BaseMessage] = None
+
+    # the set of arguments applied to the last message in the chat
+    args: ParsedArgs = None
+
+    # if not None, the system prompt that currently applies to this chat
+    system_prompt_override: str | None = None
+
+    # if true, the bot should create a system message rather than reply as itself
+    create_system_prompt_message: bool = False
+
 class ReplyChainIterator:
     """
     An async iterator which follows a chain of discord message replies until it reaches the end
@@ -79,7 +99,7 @@ class ContextManager:
     async def generate_chat_history_from_chat(
         self, message: discord.Message,
         model_definition: ModelDefinition = None,
-    ) -> tuple[list[dict[str, str]], ParsedArgs]:
+    ) -> ChatHistory:
         """
         Generates a prompt which includes the context from previous messages in a reply chain.
         Messages outside of the reply chain are ignored.
@@ -94,15 +114,14 @@ class ContextManager:
                 chat history 
         """
         history_iterator: ReplyChainIterator = ReplyChainIterator(message)
-        chat_history, args = await self.compile_chat_history(
+        chat_history = await self.compile_chat_history(
             message=message,
-            history_iterator=history_iterator,
-            model_definition=model_definition
+            history_iterator=history_iterator
         )
 
-        return chat_history, args
+        return chat_history
 
-    async def get_args_from_chat_history(self, message: discord.Message) -> tuple[list[dict[str, str]], ParsedArgs]:
+    async def get_args_from_chat_history(self, message: discord.Message) -> ParsedArgs | None:
         """
         Searches a reply chain for the last command that the user sent.
 
@@ -117,7 +136,7 @@ class ContextManager:
         async for message in history_iterator:
             # some messages in the chain may be commands for the bot
             # if so, parse only the prompt in each command in order to not confuse the bot
-            raw_content, _ = await self._get_content(message, None, None, read_attachments=False)
+            raw_content, _ = await self._get_content(message, None, read_attachments=False)
 
             # merge all the text in the message and track the number of tokens
             text: str = self._extract_text_from_content(raw_content)
@@ -133,57 +152,77 @@ class ContextManager:
         self,
         message: discord.Message,
         history_iterator: AsyncIterator[discord.Message],
-        model_definition: ModelDefinition,
-    ) -> tuple[list[dict[str, str]], ParsedArgs]:
+    ) -> ChatHistory:
         """
-        Generates an openai completion endpoint compatible messages object
-        which includes the context from previous messages from the history.
-        Returns the command which applies to this chat history, which is the last command which
-        was sent in the reply chain.
+        Generates an OpenAI completion endpoint compatible messages object from a reply chain,
+        and returns the command arguments that apply to the current chat context.
+
+        Walks the reply chain from newest to oldest, accumulating messages until the context
+        window is full. If a command with `use_as_system_prompt` is encountered, its prompt
+        is extracted as the system prompt and the command message is excluded from the history.
+        System embed messages (structural messages posted by the bot) are also excluded from
+        the history, but their presence is used to set `should_reply_to_system_message` on
+        the returned state.
 
         Args:
-            message (discord.Message): The last message to add to the prompt.
-            history_iterator (ReplyChainIterator): An iterator that contains the chat history
-                to be included in the prompt.
-            default_system_prompt (str): The system prompt to use if the system prompt is not   
-                overriden by another command within the chat history
-        Returns:
+            message (discord.Message): The most recent message in the reply chain, which
+                triggered this generation.
+            history_iterator (AsyncIterator[discord.Message]): An async iterator that yields
+                messages from the reply chain, starting from `message` and walking backwards.
+            model_definition (ModelDefinition): The model configuration, used to determine
+                capabilities such as vision support when processing attachments.
 
+        Returns:
+            ChatState: A dataclass containing:
+                - messages: The compiled chat history as a list of LangChain `AIMessage` and
+                `HumanMessage` objects, ordered from oldest to newest.
+                - args: The `ParsedArgs` from the most recent command found in the reply chain,
+                or `None` if no command was found.
+                - should_generate_system_message: `True` if the user's last command creates a
+                system message, and that system message has not yet been created.
         """
         config = Config()
 
-        # using openAI chat schemas
-        # each message will be parsed, then added to a list of messages from oldest to newest
         token_count: int = 0
-        last_command_args: ParsedArgs | None = None
-        system_prompt = None
-        chat_messages = []
 
-        # retrieve as many tokens as can fit into the context length from history
+        chat_history: ChatHistory = ChatHistory()
+        chat_history.messages = []
+
         history_token_limit: int = config.context_length - config.max_new_tokens
+        
+        is_last_message: bool = True
         async for message in history_iterator:
-            # some messages in the chain may be commands for the bot
-            # if so, parse only the prompt in each command in order to not confuse the bot
-            raw_content, added_tokens = await self._get_content(message, model_definition, history_token_limit - token_count, read_attachments=True)
-
-            # merge all the text in the message and track the number of tokens
+            raw_content, added_tokens = await self._get_content(
+                message, history_token_limit - token_count, read_attachments=True
+            )
             text: str = self._extract_text_from_content(raw_content)
 
             # if the message is a command, parse it
             if text.lower().startswith(config.command_start_str.lower()):
                 message_args: ParsedArgs = self.parser.parse(text)
-                if not last_command_args:
-                    last_command_args = message_args
-                if not system_prompt and last_command_args.use_as_system_prompt:
-                    system_prompt = last_command_args.prompt
+                if not chat_history.args:
+                    chat_history.args = message_args
+                    if is_last_message and message_args.use_as_system_prompt:
+                        chat_history.system_prompt_override = chat_history.args.prompt
+                        chat_history.create_system_prompt_message = True
+                        is_last_message = False
+                        continue
+                if message_args.use_as_system_prompt:
                     # if the command sets the system prompt, don't include it in the history
                     continue
+
                 # clean the command to only include the prompt parameter
                 text = message_args.prompt
                 added_tokens = len(message_args.prompt) // self.EST_CHARS_PER_TOKEN
 
-            # skip messages that were created by the system
-            if message.author.id == self.bot_user_id and message.embeds and message.embeds[0].footer.text == SyntheaClient.SYSTEM_TAG:
+            is_last_message = False
+
+            # skip system embed messages from chat history (they're structural, not conversational)
+            if (
+                message.author.id == self.bot_user_id
+                and message.embeds
+                and message.embeds[0].footer.text == SyntheaClient.SYSTEM_TAG
+            ):
                 continue
 
             # don't include empty messages so the bot doesn't get confused.
@@ -198,8 +237,7 @@ class ContextManager:
             user_id, user_display_name = self._get_message_sender_details(message)
             text = f"{user_display_name}: {text}"
 
-            # convert the text and any other content in the field to a list
-            # for processing
+            # compile the chat history into langgraph-compatible messages
             content = []
             if text:
                 content.append({"type": "text", "text": text})
@@ -209,17 +247,16 @@ class ContextManager:
                     continue
                 content.append({"type": entry.get("type"), entry.get("type"): entry.get(entry.get("type"))})
 
-            # update the list of messages with this message
             if message.author.id == self.bot_user_id:
-                chat_messages.insert(0, AIMessage(content=content, name=str(user_id)))
+                chat_history.messages.insert(0, AIMessage(content=content, name=str(user_id)))
             else:
-                chat_messages.insert(0, HumanMessage(content=content, name=str(user_id)))
-            
+                chat_history.messages.insert(0, HumanMessage(content=content, name=str(user_id)))
+
             token_count += added_tokens
 
-        return chat_messages, last_command_args
+        return chat_history
 
-    async def _read_attachment(self, attachment: discord.Attachment, model_definition: ModelDefinition) -> tuple[str, str] | None:
+    async def _read_attachment(self, attachment: discord.Attachment) -> tuple[str, str] | None:
         """
         Args:
             attachment: The attachment to read 
@@ -255,9 +292,9 @@ class ContextManager:
             inference_logger.info("Removing the saved file")
             os.remove(attachment.filename)
         elif attachment.content_type.startswith("image/"):
-            if not model_definition.vision:
-                inference_logger.info("Skipped processing attached image since the model cannot process images.")
-                return None
+            # if not model_definition.vision:
+            #     inference_logger.info("Skipped processing attached image since the model cannot process images.")
+            #     return None
             inference_logger.info("Found image attachment")
             # just incldue the image url
             openai_content_type = "image_url"
@@ -272,7 +309,7 @@ class ContextManager:
         Gets 
         """
 
-    async def _get_content(self, message: discord.Message, model_definition: ModelDefinition, remaining_tokens: int, read_attachments: bool=False) -> tuple[list[dict[str, str]], int]:
+    async def _get_content(self, message: discord.Message, remaining_tokens: int, read_attachments: bool=False) -> tuple[list[dict[str, str]], int]:
         """
         Gets the text and attachments from a message and counts the tokens.
         """
@@ -291,7 +328,7 @@ class ContextManager:
         # Iterate through any attachments associated with the message
         if read_attachments:
             for attachment in message.attachments:
-                attachment_contents = await self._read_attachment(attachment, model_definition)
+                attachment_contents = await self._read_attachment(attachment)
                 if not attachment_contents:
                     continue
                 openai_content_type, attachment_content = attachment_contents

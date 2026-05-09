@@ -113,3 +113,12 @@ async def clear_user_memory(user_id: str, persona=None):
         await memory.delete_all(user_id=user_id, agent_id=persona)
     else:
         await memory.delete_all(user_id=user_id)
+
+async def add_user_memory(new_memory: str, user_id: str, persona=None):
+    memory = await AsyncMemory.from_config(create_config(
+        bot_config.default_model_name, bot_config.default_model_name))
+
+    if persona:
+        await memory.add(new_memory, user_id=user_id, agent_id=persona)
+    else:
+        await memory.add(new_memory, user_id=user_id)
