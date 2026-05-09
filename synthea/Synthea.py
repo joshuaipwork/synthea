@@ -217,7 +217,7 @@ if __name__ == "__main__":
         description="Erases the bot's memories about you.",
     )
     async def erase_memory(interaction: discord.Interaction):
-        memory.clear_user_memory(str(interaction.user.id))
+        await memory.clear_user_memory(str(interaction.user.id))
         await interaction.response.send_message("The memory about you has been cleared.", ephemeral=True)
 
     @tree.command(
@@ -225,7 +225,7 @@ if __name__ == "__main__":
         description="View the bot's current memories about you.",
     )
     async def view_memory(interaction: discord.Interaction):
-        memories = memory.get_user_memories(str(interaction.user.id))
+        memories = await memory.get_user_memories(str(interaction.user.id))
 
         if not memories:
             await interaction.response.send_message("There are no memories stored about you.", ephemeral=True)
