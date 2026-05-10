@@ -213,28 +213,67 @@ if __name__ == "__main__":
 
 
     @tree.command(
-        name="erase_memory",
+        name="delete_memories",
         description="Erases the bot's memories about you.",
     )
-    async def erase_memory(interaction: discord.Interaction):
+    async def delete_memories(interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True) 
         await memory.clear_user_memory(str(interaction.user.id))
-        await interaction.response.send_message("The memory about you has been cleared.", ephemeral=True)
+        await interaction.followup.send("The memory about you has been cleared.", ephemeral=True)
 
     @tree.command(
         name="view_memory",
         description="View the bot's current memories about you.",
     )
     async def view_memory(interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True) 
         memories = await memory.get_user_memories(str(interaction.user.id))
-
+        
         if not memories:
-            await interaction.response.send_message("There are no memories stored about you.", ephemeral=True)
+            await interaction.followup.send("There are no memories stored about you.", ephemeral=True)
             return
         
         memory_summary: str = ""
         for m in memories:
-            memory_summary += f"- {m['memory']}\n"
-        await interaction.response.send_message(f"Stored memories about you:\n {memory_summary}", ephemeral=True)
+            memory_summary += f"- {m['memory']} ({m['id']})\n"
+        await interaction.followup.send(f"Stored memories about you:\n {memory_summary}", ephemeral=True)
 
+
+    @tree.command(
+        name="add_memory",
+        description="Add a memory to the bot.",
+    )
+    async def add_memory(interaction: discord.Interaction, new_memory: str):
+        await interaction.response.defer(ephemeral=True) 
+
+        results = await memory.add_user_memory(new_memory, str(interaction.user.id))
+
+        memory_summary = ""
+        if results["results"]:
+            for mem in results["results"]:
+                memory_summary += f"{mem["memory"]} ({mem['id']})\n"
+
+            await interaction.followup.send(f"Stored in memory: \n{memory_summary}", ephemeral=True)
+        else:
+            await interaction.followup.send("No new memory stored, are you sure this is something new?", ephemeral=True)
+
+    @tree.command(
+        name="delete_memory",
+        description="Delete a memory that the bot has about you.",
+    )
+    async def delete_memory(interaction: discord.Interaction, memory_id: str):
+        await interaction.response.defer(ephemeral=True) 
+        m = await memory.get_memory(memory_id)
+
+        if not m:
+            await interaction.followup.send("Could not find the memory.", ephemeral=True)
+
+        if m["user_id"] != str(interaction.user.id):
+            await interaction.followup.send("This memory is not about you.", ephemeral=True)
+            return
+        
+        await memory.delete_memory(memory_id)
+
+        await interaction.followup.send(f"Deleted memory {m["memory"]}", ephemeral=True)
 
     client.run(token)

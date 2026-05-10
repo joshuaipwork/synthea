@@ -114,11 +114,26 @@ async def clear_user_memory(user_id: str, persona=None):
     else:
         await memory.delete_all(user_id=user_id)
 
-async def add_user_memory(new_memory: str, user_id: str, persona=None):
+async def add_user_memory(new_memory: str, user_id: str, persona=None) -> dict[str, Any]:
     memory = await AsyncMemory.from_config(create_config(
         bot_config.default_model_name, bot_config.default_model_name))
 
     if persona:
-        await memory.add(new_memory, user_id=user_id, agent_id=persona)
+        return await memory.add(new_memory, user_id=user_id, agent_id=persona)
     else:
-        await memory.add(new_memory, user_id=user_id)
+        return await memory.add(new_memory, user_id=user_id)
+
+async def delete_memory(memory_id: str):
+    memory = await AsyncMemory.from_config(create_config(
+        bot_config.default_model_name, bot_config.default_model_name))
+
+    await memory.delete(memory_id)
+
+async def get_memory(memory_id: str) -> dict[str, Any] | None:
+    memory = await AsyncMemory.from_config(create_config(
+        bot_config.default_model_name, bot_config.default_model_name))
+
+    try:
+        return await memory.get(memory_id)
+    except IndexError:
+        return None
