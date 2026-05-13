@@ -10,7 +10,7 @@ import os
 bot_config = Config()
 os.environ["OPENAI_API_KEY"] = bot_config.api_key
 
-def create_config(llm_model: str, embedding_model: str):
+def create_config(llm_model: str):
     config = {
         "llm": {
             "provider": "openai",
@@ -23,15 +23,15 @@ def create_config(llm_model: str, embedding_model: str):
         "embedder": {
             "provider": "openai",
             "config": {
-                "model": embedding_model,
+                "model": bot_config.embeddings_model,
                 "api_key": bot_config.api_key,
-                "openai_base_url": bot_config.api_base_url,
+                "openai_base_url": bot_config.embeddings_base_url,
             },
         },
         "vector_store": {
             "provider": "chroma",
             "config": {
-                "collection_name": f"chatbot_memories-{embedding_model}",
+                "collection_name": f"chatbot_memories-{bot_config.embeddings_model}",
                 "path": "./chroma_db",  # just a local folder
             },
         },
@@ -44,7 +44,7 @@ async def retrieve_relevant_memories(messages: list[BaseMessage], model_name: st
     """
     From a list of messages, retrieves a list of relevant memories about the last user from mem0
     """
-    memory = await AsyncMemory.from_config(create_config(model_name, model_name))
+    memory = await AsyncMemory.from_config(create_config(model_name))
     user_turns: list[HumanMessage] = [msg for msg in messages if isinstance(msg, HumanMessage)]
 
     # get the user id from the last user
@@ -67,7 +67,7 @@ async def add_memories(messages: list[BaseMessage], model_name: str) -> str:
     From a list of messages, save information to a list of memories about the last user
     from their own messages.
     """
-    memory = await AsyncMemory.from_config(create_config(model_name, model_name))
+    memory = await AsyncMemory.from_config(create_config(model_name))
 
     # filter the messages down to only human messages to avoid stuffing the context
     user_turns = [msg for msg in messages if isinstance(msg, HumanMessage)]
@@ -99,15 +99,13 @@ def extract_text(content) -> str:
     return content
 
 async def get_user_memories(user_id) -> list[dict[str, Any]]:
-    memory = await AsyncMemory.from_config(create_config(
-        bot_config.default_model_name, bot_config.default_model_name))
+    memory = await AsyncMemory.from_config(create_config(bot_config.default_model_name))
     
     result = await memory.get_all(user_id=user_id)
     return result.get("results", [])
 
 async def clear_user_memory(user_id: str, persona=None):
-    memory = await AsyncMemory.from_config(create_config(
-        bot_config.default_model_name, bot_config.default_model_name))
+    memory = await AsyncMemory.from_config(create_config(bot_config.default_model_name))
 
     if persona:
         await memory.delete_all(user_id=user_id, agent_id=persona)
@@ -115,8 +113,7 @@ async def clear_user_memory(user_id: str, persona=None):
         await memory.delete_all(user_id=user_id)
 
 async def add_user_memory(new_memory: str, user_id: str, persona=None) -> dict[str, Any]:
-    memory = await AsyncMemory.from_config(create_config(
-        bot_config.default_model_name, bot_config.default_model_name))
+    memory = await AsyncMemory.from_config(create_config(bot_config.default_model_name))
 
     if persona:
         return await memory.add(new_memory, user_id=user_id, agent_id=persona)
@@ -124,14 +121,12 @@ async def add_user_memory(new_memory: str, user_id: str, persona=None) -> dict[s
         return await memory.add(new_memory, user_id=user_id)
 
 async def delete_memory(memory_id: str):
-    memory = await AsyncMemory.from_config(create_config(
-        bot_config.default_model_name, bot_config.default_model_name))
+    memory = await AsyncMemory.from_config(create_config(bot_config.default_model_name))
 
     await memory.delete(memory_id)
 
 async def get_memory(memory_id: str) -> dict[str, Any] | None:
-    memory = await AsyncMemory.from_config(create_config(
-        bot_config.default_model_name, bot_config.default_model_name))
+    memory = await AsyncMemory.from_config(create_config(bot_config.default_model_name))
 
     try:
         return await memory.get(memory_id)

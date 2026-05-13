@@ -27,6 +27,11 @@ class Config:
         # main model parameters
         self.api_key: str = loaded_file["api_key"]
         self.api_base_url: str = loaded_file["api_base_url"]
+
+        # embeddings url
+        self.embeddings_base_url: str = loaded_file.get("embeddings_base_url", self.api_base_url)
+        self.embeddings_model: str = loaded_file.get("embeddings_model", "text-embedding-3-small")
+
         self.default_model_name: str = loaded_file["default_model_name"]
         # Convert the list of dicts into a dict of ModelDefinitions
         self.models: dict[str, ModelDefinition] = {}
