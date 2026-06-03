@@ -3,10 +3,10 @@ import json
 from typing import Annotated, List, TypedDict
 import zoneinfo
 
-from langchain.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
+from langchain.messages import AIMessage, SystemMessage, ToolMessage
 from langchain.tools import tool
 from langgraph.graph import StateGraph, START, END, add_messages
-
+from openers import OpeningPhraseTracker
 from langchain_core.messages import BaseMessage
 from langchain_openai import ChatOpenAI
 from langchain_tavily.tavily_search import TavilySearch
@@ -48,6 +48,9 @@ class AgenticModel(Model):
         os.environ["LANGFUSE_HOST"] = synthea_config.langfuse_url
         self.langfuse_handler = CallbackHandler()
 
+        self.opening_phrase_tracker = OpeningPhraseTracker()
+
+        # the raw openai handler, used for model queries
         self.openai: AsyncOpenAI = openai.AsyncOpenAI(
             api_key=synthea_config.api_key,
             base_url=synthea_config.api_base_url
@@ -108,26 +111,22 @@ class AgenticModel(Model):
             raise e
 
     async def supervisor_node(self, state: AgentState, config: RunnableConfig):
+        opener_string = ""
+        if self.opening_phrase_tracker.recent_openers:
+            opener_string = "Do not start your response with any of these recently used phrases: \n"
+            for opener in self.opening_phrase_tracker.recent_openers:
+                opener_string += f"\"{opener}...\" \n"
+
         system = SystemMessage(content=f"""{state["system_prompt"]} \n \
-                               
+
+        {opener_string}
+
         This chat may include multiple users. Each message includes the user's name at the start, followed by a colon.  
 
         Current time: {state["current_time"]} ({state["day_of_week"]}) \n \
         What you remember about the user who sent the last message:\n {state["memories"] if "memories" in state and state["memories"] else 'Nothing yet.'}
         """)
         response = await self.llm.ainvoke([system] + state["messages"], config)
-        return {"messages": [response]}
-
-    async def formatting_node(self, state: AgentState, config: RunnableConfig):
-        system = SystemMessage(content=f"""Current time: {state["current_time"]} \n \
-            Day of week: {state["day_of_week"]} \n \
-
-            You are a formatting agent which rewrites messages. \
-            You will be given a message from the user. Your only job is to rewrite it in the voice and style of the character described. Do not respond to the user. Do not add new information. Do not address the user directly. Just rewrite the message content as if the following character had written it: \
-            ``` \n \
-            {state["system_prompt"]} \n \
-            ```""")
-        response = await self.llm.ainvoke([system, HumanMessage(content=state["messages"][-1].content)], config)
         return {"messages": [response]}
 
     async def tool_node(self, state: AgentState):
@@ -179,7 +178,7 @@ class AgenticModel(Model):
             model=model_name,
             api_key=synthea_config.api_key,
             base_url=synthea_config.api_base_url, 
-            temperature=0).bind_tools(self.tools)
+            streaming=True).bind_tools(self.tools)
 
         inference_logger.info(f"Generating with model {model_name}")
         now = datetime.now(tz=zoneinfo.ZoneInfo("America/Los_Angeles"))
@@ -203,6 +202,9 @@ class AgenticModel(Model):
             final_output=result["messages"][-1].content,
             images=result.get("images", [])
         ) 
+
+        # append the 
+        self.opening_phrase_tracker.record_response(response.final_output)
 
         return response
     

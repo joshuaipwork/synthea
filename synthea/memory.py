@@ -85,7 +85,7 @@ async def add_memories(messages: list[BaseMessage], model_name: str) -> str:
     memories = await memory.add(
         user_messages,
         user_id=user_id,
-        prompt="Here are the last couple messages from a user. Extract factual information about the user from their messages. Ignore anything the user says about other users or any AI assistants. Focus on: the user's possessions, preferences, problems, goals, and personal context.",
+        prompt="Here are the last couple messages from a user. Extract long-term factual information about the user from their messages. Ignore anything the user says about other users or any AI assistants, as well as short term . Focus on: the user's possessions, preferences, problems, goals, and personal context.",
     )
 
     return memories
