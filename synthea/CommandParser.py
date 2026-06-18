@@ -92,6 +92,7 @@ class CommandParser(argparse.ArgumentParser):
 @dataclass
 class ParsedArgs:
     character: str = None
+    # whether to use the given prompt as the system prompt instead of the next turn prompt
     use_as_system_prompt: bool = False
     use_image_model: bool = False
     prompt: str = None

@@ -10,6 +10,7 @@ langchain
 langchain-openai
 langchain-community
 langchain-tavily
+langchain-chroma>=1.1.0
 langfuse
 mem0ai
 websockets

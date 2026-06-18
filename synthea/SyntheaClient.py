@@ -16,7 +16,7 @@ from synthea.CharactersDatabase import CharactersDatabase
 
 from synthea.CommandParser import ParsedArgs
 from config import Config
-from synthea.ContextManager import ChatHistory, ContextManager
+from synthea.ContextManager import ChatHistory, ContextManager, DiscordMetadata
 from synthea.image_generation import ImageModel
 from synthea.model import Model
 from synthea.agentic_model import AgenticModel
@@ -275,8 +275,12 @@ class SyntheaClient(discord.Client):
 
         # 4: Generate the response 
         model: Model = self.llm
+        metadata: DiscordMetadata = DiscordMetadata(message_from_user)
         response: GenerationResponse = await model.queue_for_generation(
-            chat_history.messages, args=chat_history.args, persona_system_prompt=system_prompt)
+            chat_history.messages,
+            args=chat_history.args, 
+            discord_metadata=metadata,
+            persona_system_prompt=system_prompt)
         response.final_output = self._preprocess_final_output(response.final_output)
 
         # 5: Send the final response

@@ -2,6 +2,8 @@
 The starting point for the program
 """
 
+import os
+from pathlib import Path
 from typing import List
 import discord
 from discord import app_commands
@@ -9,7 +11,7 @@ import openai
 import yaml
 
 from config import Config
-from synthea import memory
+from synthea import memory, rag
 from synthea.model_definition import ModelDefinition
 from synthea.SyntheaClient import SyntheaClient
 from synthea.modals.CharCreationView import CharCreationView
@@ -275,5 +277,60 @@ if __name__ == "__main__":
         await memory.delete_memory(memory_id)
 
         await interaction.followup.send(f"Deleted memory {m["memory"]}", ephemeral=True)
+
+    @tree.command(
+        name="save_document",
+        description="Upload a doc to the bot, overriding if required. Documents are per-server and per-user in DMs.",
+    )
+    async def save_document(interaction: discord.Interaction, document: discord.Attachment):
+        await interaction.response.defer(ephemeral=True) 
+        save_directory: str = rag.get_document_path(interaction.guild_id, interaction.user.id)
+
+        # check if the document is one of the valid extensions
+        if Path(document.filename).suffix not in rag.VALID_EXTENSIONS:
+            await interaction.followup.send(f"The document must be one of: {", ".join(rag.VALID_EXTENSIONS)}!", ephemeral=True)
+            return
+
+        file_path = os.path.join(save_directory, document.filename)
+        
+        try:
+            # Save the attachment to the local path
+            await document.save(file_path)
+            await rag.ingest_document(file_path, interaction.guild_id, interaction.user.id)
+            await interaction.followup.send(f"Successfully saved `{document.filename}`", ephemeral=True)
+        except Exception as e:
+            await os.remove(file_path)
+            await interaction.followup.send(f"An error occurred while saving the file: {e}", ephemeral=True)
+
+    @tree.command(
+        name="delete_document",
+        description="Delete a doc from the bot's document store. Documents are per-server, and per-user in DMs.",
+    )
+    async def delete_document(interaction: discord.Interaction, filename: str):
+        await interaction.response.defer(ephemeral=True) 
+
+        save_directory = rag.get_document_path(interaction.guild_id, interaction.user.id)
+        file_path = os.path.join(save_directory, filename)
+
+        if os.path.exists(file_path):
+            os.remove(file_path)
+            await rag.delete_document(file_path, interaction.guild_id, interaction.user.id)
+            await interaction.followup.send(f"{file_path} has been deleted.")
+        else:
+            await interaction.followup.send(f"The file {file_path} does not exist.")
+
+    @tree.command(
+        name="list_documents",
+        description="Lists all the documents in the document store.",
+    )
+    async def list_documents(interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True) 
+        save_directory = rag.get_document_path(interaction.guild_id, interaction.user.id)
+
+        server_docs = os.listdir(save_directory)
+        if not server_docs:
+            await interaction.followup.send("There are no saved documents here.")
+        else:
+            await interaction.followup.send("\n".join(server_docs))
 
     client.run(token)

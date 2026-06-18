@@ -41,6 +41,18 @@ class ChatHistory:
     # if true, the bot should create a system message rather than reply as itself
     create_system_prompt_message: bool = False
 
+@dataclass
+class DiscordMetadata:
+    """
+    A class containing discord-specific data about the chat
+    """
+    guild_id: int
+    user_id: int
+
+    def __init__(self, message: discord.Message):
+        self.guild_id = message.guild.id
+        self.user_id = message.author.id
+
 class ReplyChainIterator:
     """
     An async iterator which follows a chain of discord message replies until it reaches the end

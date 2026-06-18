@@ -32,7 +32,7 @@ def create_config(llm_model: str):
             "provider": "chroma",
             "config": {
                 "collection_name": f"chatbot_memories-{bot_config.embeddings_model}",
-                "path": "./chroma_db",  # just a local folder
+                "path": "./chroma_db/memories",  # just a local folder
             },
         },
     }
@@ -85,7 +85,12 @@ async def add_memories(messages: list[BaseMessage], model_name: str) -> str:
     memories = await memory.add(
         user_messages,
         user_id=user_id,
-        prompt="Here are the last couple messages from a user. Extract long-term factual information about the user from their messages. Ignore anything the user says about other users or any AI assistants, as well as short term . Focus on: the user's possessions, preferences, problems, goals, and personal context.",
+        prompt="""Here is a message submitted by a user to a chatbot. Extract relevant long-term factual information about the user, which will be made available as context to future chat sessions.
+
+Guidance:
+- Disregard information the user provides about other AI assistants such as Syn or other system users.
+- Focus on information which is likely to be stable about the user: the mere fact that the user asked a particular question is unlikely to be useful. If in doubt, make the call based on whether the information may be useful context even in unrelated topics of conversation.
+- Information to remember may include the user's possessions, preferences, job/hobbies, personal context, aspirations, etc.""",
     )
 
     return memories
