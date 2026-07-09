@@ -46,11 +46,13 @@ class DiscordMetadata:
     """
     A class containing discord-specific data about the chat
     """
-    guild_id: int
+    guild_id: int | None
     user_id: int
 
     def __init__(self, message: discord.Message):
-        self.guild_id = message.guild.id
+        self.guild_id = None
+        if message.guild:
+            self.guild_id = message.guild.id
         self.user_id = message.author.id
 
 class ReplyChainIterator:

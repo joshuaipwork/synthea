@@ -1,13 +1,14 @@
 from datetime import datetime
-import inspect
 import json
 from typing import Annotated, List, NotRequired, TypedDict
+import typing
 import zoneinfo
 
 from langchain.messages import AIMessage, SystemMessage, ToolMessage
 from langchain_core.tools import tool
 from langgraph.prebuilt import InjectedState
 from langgraph.graph import StateGraph, START, END, add_messages
+from pydantic import BaseModel
 from openers import OpeningPhraseTracker
 from langchain_core.messages import BaseMessage
 from langchain_openai import ChatOpenAI
@@ -88,7 +89,7 @@ class AgenticModel(Model):
             tavily_api_key=synthea_config.tavily_api_key
         )
 
-        self.tools = [retrieve_docs, search_tool, generate_image]
+        self.tools = [document_search, search_tool, generate_image]
 
     async def memory_retrieval_node(self, state: AgentState):
         """
@@ -149,7 +150,7 @@ class AgenticModel(Model):
             response = await self.llm.ainvoke([system] + state["messages"], config)
             return {"messages": [response]}
 
-    async def tool_node(self, state: AgentState):
+    async def tool_node(self, state: AgentState, config: RunnableConfig):
         last_message: AIMessage = state["messages"][-1]
         results = []
         images = list(state.get("images") or [])
@@ -158,26 +159,10 @@ class AgenticModel(Model):
             # sanitize arguments to resolve common failure cases
             # such as quoted strings
             tool_call["args"] = sanitize_args(tool_call["args"])
-
             tool_fn = {t.name: t for t in self.tools}[tool_call["name"]]
-            
-            # Only inject state if the tool expects it
-            tool_args = {**tool_call["args"]}
-            
-            # Find the function that actually implements the tool
-            func = None
-            if hasattr(tool_fn, 'func'):
-                func = tool_fn.func
-            elif hasattr(tool_fn, '_arun'):
-                func = tool_fn._arun
-            elif hasattr(tool_fn, '_run'):
-                func = tool_fn._run
-
-            if func and 'state' in inspect.signature(func).parameters:
-                tool_args['state'] = state
 
             try:
-                result = await tool_fn.ainvoke(tool_args)
+                result = await tool_fn.ainvoke(tool_call["args"], config=config)
             except Exception as e:
                 results.append(ToolMessage(
                     content=f"The tool has encountered an error. You may need to use different arguments, or stop using this tool if the issue cannot be resolved. Tool error: {e}",
@@ -232,10 +217,12 @@ class AgenticModel(Model):
             day_of_week = day_of_week,
             model=model_name,
             args=args,
-            discord_metadata=discord_metadata
         )
 
-        agent_config: RunnableConfig = {"callbacks": [self.langfuse_handler]}
+        agent_config: RunnableConfig = {
+            "callbacks": [self.langfuse_handler],
+            "configurable": {"discord_metadata": discord_metadata}
+        }
 
         result = await self.agent.ainvoke(state, config=agent_config)
 
@@ -275,14 +262,50 @@ async def generate_image(prompt: str, width: int, height: int) -> bytes:
         for image_data in response[node_id]:
             return image_data
 
+class DocumentSearchInput(BaseModel):
+    query: str
+
 @tool
-async def retrieve_docs(query: str, state: Annotated[AgentState, InjectedState]) -> str:
-    "ALWAYS use this tool when the user asks about anything that could be "
-    "in their uploaded documents. Use it for ANY question about specific facts, "
-    "details, policies, data, or content — do not answer from memory if this "
-    "tool might have the answer."
-    inference_logger.info(f"Retrieving documents with query: {query}")
-    return await rag.retrieve_documents(query, state["discord_metadata"].guild_id, state["discord_metadata"].user_id)
+async def document_search(
+    query: str,
+    config: RunnableConfig,
+    require: str | list[str] | None = None,
+    exclude: str | list[str] | None = None,
+    regex: str | None = None,
+) -> str:
+    """
+    Retrieves documents from the document store. Use this before searching the internet
+    with other tools.
+    ALWAYS use this tool when the user asks about anything that could be
+    in their uploaded documents. Use it for ANY question about specific facts,
+    details, policies, data, or content — do not answer from memory if this
+    tool might have the answer.
+
+    Args:
+        query:   The search query to find relevant documents.
+        require: A term or list of terms that MUST appear in results (case-sensitive).
+                 ALWAYS set this when the user mentions a specific name, place, product,
+                 or proper noun. Do NOT retry with a different query alone if results are
+                 irrelevant — set require instead.
+                 Examples: require="Asteria"  |  require=["Asteria", "Astraea"]
+        exclude: A term or list of terms that MUST NOT appear in results. Use to filter
+                 out noise when results keep returning irrelevant content.
+                 Example: exclude="unrelated_topic"
+        regex:   A regex pattern the chunk must match. Use for structured content like
+                 emails, dates, IDs, or codes.
+                 Example: regex=r"INV-[0-9]+"
+    """
+    metadata: DiscordMetadata = config["configurable"]["discord_metadata"]
+    inference_logger.info(
+        f"Retrieving documents with query: {query}"
+        + (f", require={require!r}" if require else "")
+        + (f", exclude={exclude!r}" if exclude else "")
+        + (f", regex={regex!r}" if regex else "")
+    )
+    return await rag.retrieve_documents(
+        query, metadata.guild_id, metadata.user_id,
+        require=require, exclude=exclude, regex=regex,
+    )
 
 def sanitize_args(args: dict) -> dict:
     sanitized = {}
@@ -300,3 +323,15 @@ def sanitize_args(args: dict) -> dict:
         else:
             sanitized[k] = v
     return sanitized
+
+def needs_state_injection(tool_fn) -> bool:
+    func = getattr(tool_fn, "func", None)
+    if func is None:
+        return False
+    hints = typing.get_type_hints(func, include_extras=True)
+    for annotation in hints.values():
+        origin = typing.get_origin(annotation)
+        if origin is Annotated:
+            if any(isinstance(a, InjectedState) for a in typing.get_args(annotation)[1:]):
+                return True
+    return False
