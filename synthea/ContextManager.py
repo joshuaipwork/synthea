@@ -55,6 +55,16 @@ class DiscordMetadata:
             self.guild_id = message.guild.id
         self.user_id = message.author.id
 
+# Extensions we know are text/code even if the reported content_type is wrong or missing.
+TEXT_EXTENSIONS = {
+    ".rs", ".py", ".js", ".ts", ".jsx", ".tsx", ".go", ".java", ".c", ".h",
+    ".cpp", ".hpp", ".cs", ".rb", ".php", ".sh", ".bash", ".zsh", ".ps1",
+    ".sql", ".yaml", ".yml", ".toml", ".json", ".xml", ".ini", ".cfg",
+    ".conf", ".md", ".rst", ".txt", ".log", ".csv", ".tsv", ".html", ".css",
+    ".scss", ".lua", ".kt", ".swift", ".r", ".jl", ".dockerfile", ".gradle",
+    ".proto", ".graphql", ".vue", ".svelte",
+}
+
 class ReplyChainIterator:
     """
     An async iterator which follows a chain of discord message replies until it reaches the end
@@ -286,13 +296,11 @@ class ContextManager:
         openai_content_type = ""
         attachment_string = ""
         attachment_bytes = await attachment.read()
-        if not attachment.content_type or attachment.content_type.startswith("text/"):
-            openai_content_type = "text"
-            if (attachment.filename != ContextManager.REASONING_TXT_FILE_NAME):
-                attachment_string = attachment_bytes.decode()
-            else:
-                inference_logger.info("Skipping txt file because it contains bot reasoning.")
-        elif "application/pdf" in attachment.content_type:
+
+        content_type = (attachment.content_type or "").split(";")[0].strip().lower()
+        ext = os.path.splitext(attachment.filename)[1].lower()
+
+        if "application/pdf" in attachment.content_type:
             inference_logger.info("Saving the pdf attachment")
             openai_content_type = "text"
             await attachment.save(attachment.filename)
@@ -313,6 +321,17 @@ class ContextManager:
             # just incldue the image url
             openai_content_type = "image_url"
             attachment_string = attachment.url
+        elif (
+            content_type.startswith("text/")
+            or not content_type
+            or ext in TEXT_EXTENSIONS
+            or _looks_like_text(attachment_bytes)
+        ):
+            if (attachment.filename != ContextManager.REASONING_TXT_FILE_NAME):
+                openai_content_type = "text"
+                attachment_string = attachment_bytes.decode()
+            else:
+                inference_logger.info("Skipping txt file because it contains bot reasoning.")
 
         inference_logger.info(f"Obtained the text from the [{attachment.content_type}] attachment as a string")
         inference_logger.info(f"Recorded as ({openai_content_type}, {attachment_string})")
@@ -421,3 +440,14 @@ class ContextManager:
         # Convert to base64
         b64_string = base64.b64encode(image_content).decode('utf-8')
         return f'data:{mime_type};base64,{b64_string}'
+
+def _looks_like_text(data: bytes) -> bool:
+    """Heuristic: real text files essentially never contain null bytes,
+    and should be decodable as UTF-8 (or close enough)."""
+    if b"\x00" in data[:8192]:
+        return False
+    try:
+        data.decode("utf-8")
+        return True
+    except UnicodeDecodeError:
+        return False
