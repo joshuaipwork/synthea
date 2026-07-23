@@ -3,11 +3,14 @@
 Generate a prompt for the AI to respond to, given the
 message history and persona.
 """
+import asyncio
 import base64
 from dataclasses import dataclass
 import mimetypes
 from typing import AsyncIterator
 from urllib.parse import urlparse
+import uuid
+import tempfile
 import discord
 from langchain.messages import AIMessage, HumanMessage
 from langchain_core.messages import BaseMessage
@@ -64,6 +67,9 @@ TEXT_EXTENSIONS = {
     ".scss", ".lua", ".kt", ".swift", ".r", ".jl", ".dockerfile", ".gradle",
     ".proto", ".graphql", ".vue", ".svelte",
 }
+
+MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024  # 10MB
+MAX_PDF_PAGES = 200
 
 class ReplyChainIterator:
     """
@@ -300,20 +306,22 @@ class ContextManager:
         content_type = (attachment.content_type or "").split(";")[0].strip().lower()
         ext = os.path.splitext(attachment.filename)[1].lower()
 
-        if "application/pdf" in attachment.content_type:
+        # safety checks
+        if attachment.size > MAX_ATTACHMENT_BYTES:
+            inference_logger.info(f"Skipping [{attachment.filename}]: too large ({attachment.size} bytes).")
+            return None
+
+        if "application/pdf" in content_type:
             inference_logger.info("Saving the pdf attachment")
             openai_content_type = "text"
-            await attachment.save(attachment.filename)
-            reader = pypdf.PdfReader(attachment.filename)
-
-            inference_logger.info(f"Found {len(reader.pages)} pages in PDF. Reading them.")
-            for page in reader.pages:
-                page_text = page.extract_text()
-                attachment_string = attachment_string + "\n" + page_text
-            
+            with tempfile.TemporaryDirectory() as tmpdir:
+                safe_name = f"{uuid.uuid4().hex}_{os.path.basename(attachment.filename)}"
+                temp_path = os.path.join(tmpdir, safe_name)
+                await attachment.save(temp_path)
+                attachment_string = await _extract_pdf_text(temp_path)
             inference_logger.info("Removing the saved file")
-            os.remove(attachment.filename)
-        elif attachment.content_type.startswith("image/"):
+            os.remove(temp_path)
+        elif content_type.startswith("image/"):
             # if not model_definition.vision:
             #     inference_logger.info("Skipped processing attached image since the model cannot process images.")
             #     return None
@@ -329,12 +337,13 @@ class ContextManager:
         ):
             if (attachment.filename != ContextManager.REASONING_TXT_FILE_NAME):
                 openai_content_type = "text"
-                attachment_string = attachment_bytes.decode()
+                attachment_string = attachment_bytes.decode("utf-8", errors="replace")
             else:
                 inference_logger.info("Skipping txt file because it contains bot reasoning.")
+                return None
 
         inference_logger.info(f"Obtained the text from the [{attachment.content_type}] attachment as a string")
-        inference_logger.info(f"Recorded as ({openai_content_type}, {attachment_string})")
+        inference_logger.info(f"Recorded as ({openai_content_type}, {attachment_string[:200]!r})")
         return (openai_content_type, attachment_string)
 
     async def _get_linked_content(self, message: discord.Message, remaining_tokens: int, config: Config) -> tuple[list[dict[str, str]], int]:
@@ -451,3 +460,12 @@ def _looks_like_text(data: bytes) -> bool:
         return True
     except UnicodeDecodeError:
         return False
+
+async def _extract_pdf_text(path: str) -> str:
+    def _extract():
+        reader = pypdf.PdfReader(path)
+        text = ""
+        for page in reader.pages[:MAX_PDF_PAGES]:
+            text += "\n" + (page.extract_text() or "")
+        return text
+    return await asyncio.wait_for(asyncio.to_thread(_extract), timeout=10)
