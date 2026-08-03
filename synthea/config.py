@@ -29,6 +29,8 @@ class Config:
         self.api_base_url: str = loaded_file["api_base_url"]
 
         # embeddings url
+        self.enable_memory: bool = loaded_file.get("enable_memory", False)
+        self.enable_rag_lookup: bool = loaded_file.get("enable_rag_lookup", False)
         self.embeddings_base_url: str = loaded_file.get("embeddings_base_url", self.api_base_url)
         self.embeddings_model: str = loaded_file.get("embeddings_model", "text-embedding-3-small")
 

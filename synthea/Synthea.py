@@ -219,6 +219,11 @@ if __name__ == "__main__":
         description="Erases the bot's memories about you.",
     )
     async def delete_memories(interaction: discord.Interaction):
+        if client.config.enable_memory is False:
+            await interaction.response.send_message(
+                "Memory is not enabled on this bot.", ephemeral=True
+            )
+            return
         await interaction.response.defer(ephemeral=True) 
         await memory.clear_user_memory(str(interaction.user.id))
         await interaction.followup.send("The memory about you has been cleared.", ephemeral=True)
@@ -228,6 +233,12 @@ if __name__ == "__main__":
         description="View the bot's current memories about you.",
     )
     async def view_memory(interaction: discord.Interaction):
+        if client.config.enable_memory is False:
+            await interaction.response.send_message(
+                "Memory is not enabled on this bot.", ephemeral=True
+            )
+            return
+
         await interaction.response.defer(ephemeral=True) 
         memories = await memory.get_user_memories(str(interaction.user.id))
         
@@ -246,6 +257,12 @@ if __name__ == "__main__":
         description="Add a memory to the bot.",
     )
     async def add_memory(interaction: discord.Interaction, new_memory: str):
+        if client.config.enable_memory is False:
+            await interaction.response.send_message(
+                "Memory is not enabled on this bot.", ephemeral=True
+            )
+            return
+
         await interaction.response.defer(ephemeral=True) 
 
         results = await memory.add_user_memory(new_memory, str(interaction.user.id))
@@ -264,6 +281,12 @@ if __name__ == "__main__":
         description="Delete a memory that the bot has about you.",
     )
     async def delete_memory(interaction: discord.Interaction, memory_id: str):
+        if client.config.enable_memory is False:
+            await interaction.response.send_message(
+                "Memory is not enabled on this bot.", ephemeral=True
+            )
+            return
+
         await interaction.response.defer(ephemeral=True) 
         m = await memory.get_memory(memory_id)
 
@@ -283,6 +306,12 @@ if __name__ == "__main__":
         description="Upload a doc to the bot, overriding if required. Documents are per-server and per-user in DMs.",
     )
     async def save_document(interaction: discord.Interaction, document: discord.Attachment):
+        if client.config.enable_rag_lookup is False:
+            await interaction.response.send_message(
+                "RAG lookup is not enabled on this bot.", ephemeral=True
+            )
+            return
+
         await interaction.response.defer(ephemeral=True) 
         save_directory: str = rag.get_document_path(interaction.guild_id, interaction.user.id)
 
@@ -307,6 +336,12 @@ if __name__ == "__main__":
         description="Delete a doc from the bot's document store. Documents are per-server, and per-user in DMs.",
     )
     async def delete_document(interaction: discord.Interaction, filename: str):
+        if client.config.enable_rag_lookup is False:
+            await interaction.response.send_message(
+                "RAG lookup is not enabled on this bot.", ephemeral=True
+            )
+            return
+
         await interaction.response.defer(ephemeral=True) 
 
         save_directory = rag.get_document_path(interaction.guild_id, interaction.user.id)
@@ -324,6 +359,12 @@ if __name__ == "__main__":
         description="Lists all the documents in the document store.",
     )
     async def list_documents(interaction: discord.Interaction):
+        if client.config.enable_rag_lookup is False:
+            await interaction.response.send_message(
+                "RAG lookup is not enabled on this bot.", ephemeral=True
+            )
+            return
+        
         await interaction.response.defer(ephemeral=True) 
         save_directory = rag.get_document_path(interaction.guild_id, interaction.user.id)
 

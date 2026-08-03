@@ -48,6 +48,7 @@ class AgenticModel(Model):
 
     def __init__(self):
         synthea_config: Config = Config()
+        self.synthea_config = synthea_config
 
         os.environ["LANGFUSE_PUBLIC_KEY"] = synthea_config.langfuse_public_key
         os.environ["LANGFUSE_SECRET_KEY"] = synthea_config.langfuse_secret_key
@@ -89,13 +90,17 @@ class AgenticModel(Model):
             tavily_api_key=synthea_config.tavily_api_key
         )
 
-        self.tools = [document_search, search_tool, generate_image]
+        self.tools = [search_tool, generate_image]
+        if self.synthea_config.enable_rag_lookup:
+            self.tools.append(document_search)
 
     async def memory_retrieval_node(self, state: AgentState):
         """
         Retrieves memories from mem0 related to the conversation
         """
         if state["args"].use_as_system_prompt:
+            return
+        if self.synthea_config.enable_memory is False:
             return
 
         try:
@@ -112,6 +117,8 @@ class AgenticModel(Model):
         Saves memories related to a conversation to mem0
         """
         if state["args"].use_as_system_prompt:
+            return
+        if self.synthea_config.enable_memory is False:
             return
 
         try:
