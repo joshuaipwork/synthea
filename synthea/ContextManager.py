@@ -319,8 +319,6 @@ class ContextManager:
                 temp_path = os.path.join(tmpdir, safe_name)
                 await attachment.save(temp_path)
                 attachment_string = await _extract_pdf_text(temp_path)
-            inference_logger.info("Removing the saved file")
-            os.remove(temp_path)
         elif content_type.startswith("image/"):
             # if not model_definition.vision:
             #     inference_logger.info("Skipped processing attached image since the model cannot process images.")
