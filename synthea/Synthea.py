@@ -15,6 +15,7 @@ from synthea import memory, rag
 from synthea.model_definition import ModelDefinition
 from synthea.SyntheaClient import SyntheaClient
 from synthea.modals.CharCreationView import CharCreationView
+from synthea.modals.MemoryPagesView import MemoryPagesView
 from synthea.modals.UpdateCharModal import UpdateCharModal
 from synthea.modals.CharCreationStep import CharCreationStep
 from synthea.character_errors import (
@@ -245,11 +246,17 @@ if __name__ == "__main__":
         if not memories:
             await interaction.followup.send("There are no memories stored about you.", ephemeral=True)
             return
-        
-        memory_summary: str = ""
-        for m in memories:
-            memory_summary += f"- {m['memory']} ({m['id']})\n"
-        await interaction.followup.send(f"Stored memories about you:\n {memory_summary}", ephemeral=True)
+
+        # if there's only one page worth of memories, just send them as plain text
+        if len(memories) <= MemoryPagesView.DEFAULT_PAGE_SIZE:
+            memory_summary: str = "Stored memories about you:\n"
+            for m in memories:
+                memory_summary += f"- {m['memory']} ({m['id']})\n"
+            await interaction.followup.send(memory_summary, ephemeral=True)
+            return
+
+        view = MemoryPagesView(memories)
+        await interaction.followup.send(view._build_content(), ephemeral=True, view=view)
 
 
     @tree.command(
