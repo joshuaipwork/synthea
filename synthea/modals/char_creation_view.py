@@ -1,4 +1,4 @@
-from synthea.modals.CharCreationStep import CharCreationStep
+from synthea.modals.char_creation_step import CharCreationStep
 from typing import Callable
 import yaml
 import discord

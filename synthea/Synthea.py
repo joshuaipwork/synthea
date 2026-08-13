@@ -14,10 +14,10 @@ from config import Config
 from synthea import memory, rag
 from synthea.model_definition import ModelDefinition
 from synthea.SyntheaClient import SyntheaClient
-from synthea.modals.CharCreationView import CharCreationView
-from synthea.modals.MemoryPagesView import MemoryPagesView
-from synthea.modals.UpdateCharModal import UpdateCharModal
-from synthea.modals.CharCreationStep import CharCreationStep
+from synthea.modals.char_creation_view import CharCreationView
+from synthea.modals.memory_pages_view import MemoryPagesView, DEFAULT_PAGE_SIZE
+from synthea.modals.update_char_modal import UpdateCharModal
+from synthea.modals.char_creation_step import CharCreationStep
 from synthea.character_errors import (
     CharacterNotFoundError,
     ForbiddenCharacterError,
@@ -248,7 +248,7 @@ if __name__ == "__main__":
             return
 
         # if there's only one page worth of memories, just send them as plain text
-        if len(memories) <= MemoryPagesView.DEFAULT_PAGE_SIZE:
+        if len(memories) <= DEFAULT_PAGE_SIZE:
             memory_summary: str = "Stored memories about you:\n"
             for m in memories:
                 memory_summary += f"- {m['memory']} ({m['id']})\n"

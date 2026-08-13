@@ -10,7 +10,6 @@ MAX_MEMORY_CHARS = 150
 MAX_MESSAGE_CHARS = 1900
 DEFAULT_PAGE_SIZE = 10
 
-
 class MemoryPagesView(ui.View):
     """
     A view that paginates a (potentially large) list of memories so the user can
