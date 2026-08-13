@@ -10,7 +10,6 @@ from io import BytesIO
 
 import discord
 import yaml
-from synthea.config import Config
 from discord import app_commands
 
 from synthea.agentic_model import AgenticModel
@@ -20,6 +19,7 @@ from synthea.character_errors import (
     CharacterNotOnServerError,
 )
 from synthea.commands import ParsedArgs
+from synthea.config import Config
 from synthea.constants import SYSTEM_TAG
 from synthea.context_manager import ChatHistory, ContextManager, DiscordMetadata
 from synthea.dtos import GenerationResponse

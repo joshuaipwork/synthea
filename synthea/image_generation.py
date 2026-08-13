@@ -4,6 +4,7 @@ import random
 import uuid
 
 import requests
+
 from synthea.config import Config
 
 config = Config()

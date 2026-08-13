@@ -4,7 +4,6 @@ from dataclasses import dataclass
 from typing import IO, NoReturn
 
 from synthea.config import Config
-
 from synthea.exceptions import InvalidImageDimensionsException
 
 config = Config()

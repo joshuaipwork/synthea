@@ -15,12 +15,12 @@ from urllib.parse import urlparse
 import discord
 import pypdf
 import requests
-from synthea.config import Config
 from langchain.messages import AIMessage, HumanMessage
 from langchain_core.messages import BaseMessage
 
 from synthea.character_database import CharactersDatabase
 from synthea.commands import ChatbotParser, ParsedArgs
+from synthea.config import Config
 from synthea.constants import SYSTEM_TAG
 from synthea.model_definition import ModelDefinition
 from synthea.utilities import inference_logger

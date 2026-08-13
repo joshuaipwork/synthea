@@ -100,7 +100,9 @@ def split_text_smartly(text, max_length=2000) -> list[str]:
 
                 # If there's neither a period nor a space, just split at max_length
                 if split_point == -1:
-                    split_point = max_length
+                    pieces.append(paragraph[:max_length].strip())
+                    paragraph = paragraph[max_length:].strip()
+                    continue
 
                 # Add the split part to the pieces and remove it from the paragraph
                 pieces.append(paragraph[: split_point + 1].strip())

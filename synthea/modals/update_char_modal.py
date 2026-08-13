@@ -1,8 +1,8 @@
 import discord
 from discord import TextStyle, ui
 from discord.interactions import Interaction
-from synthea.character_database import CharactersDatabase
 
+from synthea.character_database import CharactersDatabase
 from synthea.character_errors import (
     ForbiddenCharacterError,
 )

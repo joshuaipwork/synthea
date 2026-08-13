@@ -7,7 +7,6 @@ from pathlib import Path
 import discord
 import openai
 import yaml
-from synthea.config import Config
 from discord import app_commands
 
 from synthea import memory, rag
@@ -16,6 +15,7 @@ from synthea.character_errors import (
     ForbiddenCharacterError,
 )
 from synthea.client import SyntheaClient
+from synthea.config import Config
 from synthea.modals.char_creation_step import CharCreationStep
 from synthea.modals.char_creation_view import CharCreationView
 from synthea.modals.memory_pages_view import DEFAULT_PAGE_SIZE, MemoryPagesView

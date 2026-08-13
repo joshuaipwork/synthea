@@ -6,7 +6,6 @@ from datetime import datetime
 from typing import Annotated, NotRequired, TypedDict
 
 import openai
-from synthea.config import Config
 from langchain.messages import AIMessage, SystemMessage, ToolMessage
 from langchain_core.messages import BaseMessage
 from langchain_core.runnables import RunnableConfig
@@ -17,15 +16,16 @@ from langfuse.langchain import CallbackHandler
 from langgraph.graph import END, START, StateGraph, add_messages
 from langgraph.prebuilt import InjectedState
 from openai import AsyncOpenAI
-from synthea.openers import OpeningPhraseTracker
 from pydantic import BaseModel
 
 from synthea import memory, rag
 from synthea.commands import ParsedArgs
+from synthea.config import Config
 from synthea.context_manager import DiscordMetadata
 from synthea.dtos import GenerationResponse
 from synthea.image_generation import ImageModel
 from synthea.model import Model
+from synthea.openers import OpeningPhraseTracker
 from synthea.utilities import inference_logger
 
 

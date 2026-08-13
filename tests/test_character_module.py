@@ -3,12 +3,12 @@ import os
 
 import pytest
 
+from synthea.character_database import CharactersDatabase
 from synthea.character_errors import (
     CharacterNotFoundError,
     DuplicateCharacterError,
     ForbiddenCharacterError,
 )
-from synthea.character_database import CharactersDatabase
 
 
 @pytest.fixture(scope="module")
