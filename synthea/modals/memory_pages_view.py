@@ -1,7 +1,6 @@
-# -*- coding: utf-8 -*-
+"""A paginated view for browsing a user's stored memories.
 """
-A paginated view for browsing a user's stored memories.
-"""
+
 import discord
 from discord import ButtonStyle, ui
 
@@ -10,9 +9,9 @@ MAX_MEMORY_CHARS = 150
 MAX_MESSAGE_CHARS = 1900
 DEFAULT_PAGE_SIZE = 10
 
+
 class MemoryPagesView(ui.View):
-    """
-    A view that paginates a (potentially large) list of memories so the user can
+    """A view that paginates a (potentially large) list of memories so the user can
     browse them with previous/next buttons instead of a single oversized message.
     """
 
@@ -43,7 +42,9 @@ class MemoryPagesView(ui.View):
         end = min(start + self.page_size, len(self.memories))
         page_memories = self.memories[start:end]
 
-        lines = [f"Stored memories about you (page {self.page + 1}/{self.num_pages}):\n"]
+        lines = [
+            f"Stored memories about you (page {self.page + 1}/{self.num_pages}):\n",
+        ]
         for m in page_memories:
             memory_text = str(m["memory"])
             if len(memory_text) > MAX_MEMORY_CHARS:
@@ -57,13 +58,17 @@ class MemoryPagesView(ui.View):
         """Moves to the previous page."""
         self.page = max(0, self.page - 1)
         self._update_buttons()
-        await interaction.response.edit_message(content=self._build_content(), view=self)
+        await interaction.response.edit_message(
+            content=self._build_content(), view=self,
+        )
 
     async def go_to_next_page(self, interaction: discord.Interaction):
         """Moves to the next page."""
         self.page = min(self.num_pages - 1, self.page + 1)
         self._update_buttons()
-        await interaction.response.edit_message(content=self._build_content(), view=self)
+        await interaction.response.edit_message(
+            content=self._build_content(), view=self,
+        )
 
     async def on_timeout(self) -> None:
         """On timeout, disable the buttons."""

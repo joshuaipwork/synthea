@@ -1,6 +1,5 @@
 class DuplicateCharacterError(ValueError):
-    """
-    Raised when a user tries to create a character that already exists.
+    """Raised when a user tries to create a character that already exists.
     """
 
     def __init__(self, message="A character with that name exists already."):
@@ -8,8 +7,7 @@ class DuplicateCharacterError(ValueError):
 
 
 class InvalidCharacterIDError(ValueError):
-    """
-    Raised when a user tries to create a character with an invalid ID.
+    """Raised when a user tries to create a character with an invalid ID.
     """
 
     def __init__(
@@ -20,8 +18,7 @@ class InvalidCharacterIDError(ValueError):
 
 
 class CharacterNotOnServerError(ValueError):
-    """
-    Raised when a user tries to invoke a character that hasn't been added to
+    """Raised when a user tries to invoke a character that hasn't been added to
     the server. It is intentionally ambiguous as to whether or not such a
     character exists to avoid exposing private characters.
     """
@@ -34,8 +31,7 @@ class CharacterNotOnServerError(ValueError):
 
 
 class CharacterNotFoundError(ValueError):
-    """
-    Raised when a user tries to do something to a character that doesn't exist.
+    """Raised when a user tries to do something to a character that doesn't exist.
     """
 
     def __init__(
@@ -46,8 +42,7 @@ class CharacterNotFoundError(ValueError):
 
 
 class ForbiddenCharacterError(ValueError):
-    """
-    Raised when a user tries to edit a character
+    """Raised when a user tries to edit a character
     which doesn't belong to them.
     """
 

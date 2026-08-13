@@ -1,49 +1,51 @@
+"""The discord client which contains the bulk of the logic for the chatbot.
 """
-The discord client which contains the bulk of the logic for the chatbot.
-"""
-from datetime import datetime
-from io import BytesIO
+
+import asyncio
 import logging
 import re
 import traceback
-from typing import Optional
+from datetime import datetime
+from io import BytesIO
+
 import discord
-from discord import app_commands
 import yaml
-import asyncio
+from synthea.config import Config
+from discord import app_commands
 
-from synthea.CharactersDatabase import CharactersDatabase
-
-from synthea.CommandParser import ParsedArgs
-from config import Config
-from synthea.ContextManager import ChatHistory, ContextManager, DiscordMetadata
-from synthea.image_generation import ImageModel
-from synthea.model import Model
 from synthea.agentic_model import AgenticModel
-from synthea.dtos.GenerationResponse import GenerationResponse
+from synthea.character_database import CharactersDatabase
 from synthea.character_errors import (
     CharacterNotFoundError,
     CharacterNotOnServerError,
 )
+from synthea.commands import ParsedArgs
+from synthea.constants import SYSTEM_TAG
+from synthea.context_manager import ChatHistory, ContextManager, DiscordMetadata
+from synthea.dtos import GenerationResponse
+from synthea.image_generation import ImageModel
+from synthea.model import Model
 
 CHAR_LIMIT: int = 2000  # discord's character limit
 DISCORD_EMBED_LIMIT: int = 4000  # discord's character limit
 FOOTER_PATTERN: str = r"^(.*) \| (\d+)$"
-CHAT_TAG_PATTERN: str = r'^[^:\n]{2,32}:\s(.*)$'
-SYSTEM_TAG = "System"
+CHAT_TAG_PATTERN: str = r"^[^:\n]{2,32}:\s(.*)$"
 
 CLIENT_LOGGER = logging.getLogger("synthea-client-logger")
 CLIENT_LOGGER.handlers.clear()  # Clear any existing handlers
 CLIENT_LOGGER.propagate = False  # Prevent propagation to parent loggers
 console_handler = logging.StreamHandler()
-formatter = logging.Formatter("%(asctime)s,%(msecs)03d %(levelname)-8s [%(filename)s:%(lineno)d] %(message)s", datefmt="%Y-%m-%d:%H:%M:%S")
+formatter = logging.Formatter(
+    "%(asctime)s,%(msecs)03d %(levelname)-8s [%(filename)s:%(lineno)d] %(message)s",
+    datefmt="%Y-%m-%d:%H:%M:%S",
+)
 console_handler.setFormatter(formatter)
 CLIENT_LOGGER.addHandler(console_handler)
 
+
 # This example requires the 'message_content' intent.
 class SyntheaClient(discord.Client):
-    """
-    A discord client which recieves messages from users. When users send
+    """A discord client which recieves messages from users. When users send
     messages, the bot parses them and generates messages for them.
     """
 
@@ -78,7 +80,7 @@ class SyntheaClient(discord.Client):
     #     """
     #     When the bot is started and logs in, load the model.
     #     """
-   
+
     def measure_time(func):
         async def async_wrapper(*args, **kwargs):
             start_time = datetime.now()
@@ -86,7 +88,9 @@ class SyntheaClient(discord.Client):
                 result = await func(*args, **kwargs)
             end_time = datetime.now()
             execution_time = (end_time - start_time).total_seconds()
-            CLIENT_LOGGER.info(f"Async function {func.__name__} took {execution_time:.4f} seconds to finish.")
+            CLIENT_LOGGER.info(
+                f"Async function {func.__name__} took {execution_time:.4f} seconds to finish.",
+            )
             return result
 
         def sync_wrapper(*args, **kwargs):
@@ -94,17 +98,17 @@ class SyntheaClient(discord.Client):
             result = func(*args, **kwargs)
             end_time = datetime.now()
             execution_time = (end_time - start_time).total_seconds()
-            CLIENT_LOGGER.info(f"Function {func.__name__} took {execution_time:.4f} seconds to execute.")
+            CLIENT_LOGGER.info(
+                f"Function {func.__name__} took {execution_time:.4f} seconds to execute.",
+            )
             return result
 
         if asyncio.iscoroutinefunction(func):
             return async_wrapper
-        else:
-            return sync_wrapper
+        return sync_wrapper
 
     async def on_ready(self):
-        """
-        Reports to the console that we logged in.
+        """Reports to the console that we logged in.
         """
         with open("config.yaml", encoding="utf-8") as config_file:
             config = yaml.safe_load(config_file)
@@ -119,8 +123,7 @@ class SyntheaClient(discord.Client):
         CLIENT_LOGGER.info(f"Logged on as {self.user}!")
 
     async def on_reaction_add(self, reaction: discord.Reaction, user):
-        """
-        Enables the bot to take a variety of actions when its posts are reacted to
+        """Enables the bot to take a variety of actions when its posts are reacted to
 
         [🗑️] will tell the bot to delete its own post
         [▶️] will tell the bot to stop generating
@@ -139,8 +142,10 @@ class SyntheaClient(discord.Client):
 
             # regenerate the response
             if reaction.emoji == "🔁":
-                user_message = await reaction.message.channel.fetch_message(reaction.message.reference.message_id)
-                
+                user_message = await reaction.message.channel.fetch_message(
+                    reaction.message.reference.message_id,
+                )
+
                 # TODO: regenerate the response.
                 await reaction.message.delete()
                 await user_message.remove_reaction("❌", self.user)
@@ -153,8 +158,7 @@ class SyntheaClient(discord.Client):
                 await user_message.remove_reaction("⏳", self.user)
 
     async def on_message(self, message: discord.Message):
-        """
-        Respond to messages sent to the bot.
+        """Respond to messages sent to the bot.
 
         If a message is not by a user or fails to start with the command start string, then
         the message is ignored.
@@ -176,7 +180,7 @@ class SyntheaClient(discord.Client):
             # if the message replied to the bot, then it was directed at the bot.
             try:
                 replied_message: discord.Message = await message.channel.fetch_message(
-                    message.reference.message_id
+                    message.reference.message_id,
                 )
                 if replied_message.author.id == self.user.id:
                     message_invokes_chatbot = True
@@ -206,25 +210,29 @@ class SyntheaClient(discord.Client):
 
     @measure_time
     async def respond_to_user(self, message_from_user: discord.Message):
-        """
-        Generates and send a response to a user message from the chatbot
+        """Generates and send a response to a user message from the chatbot
 
         Args:
             message (str): The message to respond to
+
         """
         config: Config = Config()
         context_manager = ContextManager(self.user.id)
 
         # # 1. Get the chat history
-        chat_history: ChatHistory = await context_manager.generate_chat_history_from_chat(message_from_user)
+        chat_history: ChatHistory = (
+            await context_manager.generate_chat_history_from_chat(message_from_user)
+        )
 
         # 2: Run a utility command if one was present
         # if the user just specified a system prompt, create a system message
         # and wait for further prompts
         if chat_history.create_system_prompt_message:
-            await self.send_response_as_system("Conversation started...", message_from_user)
+            await self.send_response_as_system(
+                "Conversation started...", message_from_user,
+            )
             return
-        
+
         # if the user just wants to create an image, just create an image and
         # ignore the LLM
         if chat_history.args and chat_history.args.use_image_model:
@@ -232,11 +240,14 @@ class SyntheaClient(discord.Client):
             start_time = datetime.now()
 
             generated_images = await self.image_model.generate_image_from_prompt(
-                chat_history.args.prompt, width=chat_history.args.image_width, height=chat_history.args.image_height)
+                chat_history.args.prompt,
+                width=chat_history.args.image_width,
+                height=chat_history.args.image_height,
+            )
             end_time = datetime.now()
             response.final_output = f"""
                 {chat_history.args.prompt.strip()} \n
-                ({chat_history.args.dimensions if chat_history.args.dimensions else f"{config.image_default_height}x{config.image_default_width}"}, took {(end_time - start_time).total_seconds():.2f}s)
+                ({chat_history.args.dimensions or f"{config.image_default_height}x{config.image_default_width}"}, took {(end_time - start_time).total_seconds():.2f}s)
                 """
             for node_id in generated_images:
                 for image_data in generated_images[node_id]:
@@ -252,14 +263,16 @@ class SyntheaClient(discord.Client):
         # replied_char_id = await self._get_character_replied_to(message_from_user)
         # if replied_char_id:
         #     char_id = replied_char_id
-        
+
         # if a character was invoked, check that the user can use that character
         char_id: str = chat_history.args.character
         if char_id and char_id != SYSTEM_TAG:
             can_access = self.char_db.can_access_character(
                 char_id=char_id,
                 user_id=message_from_user.author.id,
-                server_id=message_from_user.guild.id if message_from_user.guild else None,
+                server_id=message_from_user.guild.id
+                if message_from_user.guild
+                else None,
             )
             if not can_access:
                 raise CharacterNotOnServerError()
@@ -267,41 +280,47 @@ class SyntheaClient(discord.Client):
             char_data = self.char_db.load_character(char_id)
 
             system_prompt: str = ""
-            if "system_prompt" in char_data and char_data["system_prompt"]:
+            if char_data.get("system_prompt"):
                 system_prompt += char_data["system_prompt"]
-            if "example_messages" in char_data and char_data["example_messages"]:
+            if char_data.get("example_messages"):
                 system_prompt += "\n\n Here are some examples of how to speak:\n"
                 system_prompt += char_data["example_messages"]
 
-        # 4: Generate the response 
+        # 4: Generate the response
         model: Model = self.llm
         metadata: DiscordMetadata = DiscordMetadata(message_from_user)
         response: GenerationResponse = await model.queue_for_generation(
             chat_history.messages,
-            args=chat_history.args, 
+            args=chat_history.args,
             discord_metadata=metadata,
-            persona_system_prompt=system_prompt)
+            persona_system_prompt=system_prompt,
+        )
         response.final_output = self._preprocess_final_output(response.final_output)
 
         # 5: Send the final response
         if char_id and char_id != SYSTEM_TAG:
-            CLIENT_LOGGER.info(f"Responded to {message_from_user.author} with char {char_id}")
+            CLIENT_LOGGER.info(
+                f"Responded to {message_from_user.author} with char {char_id}",
+            )
             CLIENT_LOGGER.info(response)
-            await self.send_response_as_character(response, char_data, message_from_user)
+            await self.send_response_as_character(
+                response, char_data, message_from_user,
+            )
         else:
             CLIENT_LOGGER.info(f"Responded to {message_from_user.author}")
             CLIENT_LOGGER.info(response.final_output)
             await self.send_response_as_base(response, message_from_user)
 
     def _preprocess_final_output(self, final_output: str) -> str:
+        """Does some simple preprocessing to improve the quality of responses
         """
-        Does some simple preprocessing to improve the quality of responses
-        """
-        final_output = re.sub(r'Message from \".*?\":\n', '', final_output)
-        if final_output.lower().startswith(f"Message from {self.config.bot_name}".lower()):
-            final_output = final_output[len(f"Message from {self.config.bot_name}"):]
+        final_output = re.sub(r"Message from \".*?\":\n", "", final_output)
+        if final_output.lower().startswith(
+            f"Message from {self.config.bot_name}".lower(),
+        ):
+            final_output = final_output[len(f"Message from {self.config.bot_name}") :]
         if final_output.lower().startswith("Message from Syn".lower()):
-            final_output = final_output[len("Message from Syn"):]
+            final_output = final_output[len("Message from Syn") :]
 
         # remove roleplay chat tags
         # This regex now uses a capture group to match the rest of the line
@@ -310,7 +329,7 @@ class SyntheaClient(discord.Client):
             # If there's a match, return the captured group (rest of the line)
             final_output = match.group(1)
         if final_output.lower().startswith("Syn:".lower()):
-            final_output = final_output[len("Syn:"):]
+            final_output = final_output[len("Syn:") :]
         if len(final_output) > DISCORD_EMBED_LIMIT:
             final_output = final_output[:DISCORD_EMBED_LIMIT]
 
@@ -320,21 +339,27 @@ class SyntheaClient(discord.Client):
         #         final_output = final_output[:len(final_output)-len(stop_word)]
         return final_output
 
-    async def send_response_as_base(self, response: GenerationResponse, message: discord.Message):
-        """
-        Sends a simple response using the base template of the model.
+    async def send_response_as_base(
+        self, response: GenerationResponse, message: discord.Message,
+    ):
+        """Sends a simple response using the base template of the model.
         """
         # create an embed to extend the character count
         embed = None
         if response.final_output:
             embed: discord.Embed = discord.Embed(
-                description=response.final_output if response.final_output.strip() else "..."
+                description=response.final_output
+                if response.final_output.strip()
+                else "...",
             )
-        await self.send_response(embed=embed, message_to_reply=message, files=self.convert_generation_response_to_files(response))
+        await self.send_response(
+            embed=embed,
+            message_to_reply=message,
+            files=self.convert_generation_response_to_files(response),
+        )
 
     async def send_response_as_system(self, response: str, message: discord.Message):
-        """
-        Sends a simple response annotated as system. System-annotated messages
+        """Sends a simple response annotated as system. System-annotated messages
         are ignored for chat history purposes.
         """
         # create an embed to extend the character count
@@ -344,13 +369,17 @@ class SyntheaClient(discord.Client):
                 description=response,
             )
         embed.set_footer(text=SYSTEM_TAG)
-        await self.send_response(embed=embed, message_to_reply=message, add_buttons=False)
+        await self.send_response(
+            embed=embed, message_to_reply=message, add_buttons=False,
+        )
 
     async def send_response_as_character(
-        self, response: GenerationResponse, char_data: dict[str, str], message: discord.Message
+        self,
+        response: GenerationResponse,
+        char_data: dict[str, str],
+        message: discord.Message,
     ):
-        """
-        Sends the given response in the same channel as the given message while
+        """Sends the given response in the same channel as the given message while
         using the picture and name associated with the character.
 
         response (str): The response to be sent
@@ -381,18 +410,17 @@ class SyntheaClient(discord.Client):
         await self.send_response(
             embed=embed,
             message_to_reply=message,
-            files=self.convert_generation_response_to_files(response)
+            files=self.convert_generation_response_to_files(response),
         )
 
     async def send_response(
         self,
         message_to_reply: discord.Message = None,
-        embed: Optional[discord.Embed] = None,
+        embed: discord.Embed | None = None,
         add_buttons: bool = True,
-        files: Optional[list[discord.File]] = None,
+        files: list[discord.File] | None = None,
     ):
-        """
-        Sends a response, splitting it up into multiple messages if required
+        """Sends a response, splitting it up into multiple messages if required
 
         Args:
             message_to_reply (discord.Message): The message that the user sent to invoke the bot.
@@ -403,6 +431,7 @@ class SyntheaClient(discord.Client):
             embed (discord.Embed or None): The embed to send in the response.
                 If response_text is None, then embed is required.
             thread (discord.Thread or None): If provided, the response will be sent in this thread.
+
         """
         # split up the response into messages and send them individually
         # print(f"Response ({len(response_text)} chars):\n{response_text}")
@@ -414,16 +443,18 @@ class SyntheaClient(discord.Client):
             )
             # raise ValueError("No embed or response text included in the response.")
         if embed and not embed.description:
-            embed.description="..."
+            embed.description = "..."
 
-        bot_message: discord.Message = await message_to_reply.reply(mention_author=True, embed=embed, files=files)
+        bot_message: discord.Message = await message_to_reply.reply(
+            mention_author=True, embed=embed, files=files,
+        )
 
         # add controls
         if add_buttons:
             await bot_message.add_reaction("🗑️")
             await bot_message.add_reaction("🔁")
 
-    # TODO: DEPRECATED, character can be inferred from the latest command 
+    # TODO: DEPRECATED, character can be inferred from the latest command
     # async def _get_character_replied_to(self, message: discord.Message) -> str | None:
     #     """
     #     Determines if a user replied to a character.
@@ -461,35 +492,40 @@ class SyntheaClient(discord.Client):
 
     #     return None
 
-    def convert_generation_response_to_files(self, response: GenerationResponse) -> list[discord.File]: 
-        """
-        Converts a generation response to a set of files to embed with the
+    def convert_generation_response_to_files(
+        self, response: GenerationResponse,
+    ) -> list[discord.File]:
+        """Converts a generation response to a set of files to embed with the
         discord message.
         """
         files: list[discord.File] = []
-        if (response.reasoning):
+        if response.reasoning:
             CLIENT_LOGGER.info("Appending reasoning file to the message.")
             buffer = BytesIO(response.reasoning.encode())
-            reasoning_file: discord.File = discord.File(buffer, filename=ContextManager.REASONING_TXT_FILE_NAME)
+            reasoning_file: discord.File = discord.File(
+                buffer, filename=ContextManager.REASONING_TXT_FILE_NAME,
+            )
             files.append(reasoning_file)
 
-        if (response.images):
-            CLIENT_LOGGER.info(f"Appending {len(response.images)} images to the message.")
+        if response.images:
+            CLIENT_LOGGER.info(
+                f"Appending {len(response.images)} images to the message.",
+            )
             for index, image in enumerate(response.images):
                 buffer = BytesIO(image)
                 files.append(discord.File(buffer, filename=f"image_{index}.png"))
-        
+
         CLIENT_LOGGER.info(f"Appending {len(files)} files to the message.")
         return files
-    
+
     def _generate_system_prompt(self, args: ParsedArgs):
-        """
-        Generates a system prompt
+        """Generates a system prompt
 
         Args:
-            args: if passed, then 
+            args: if passed, then
+
         """
-        system_prompt: str = self.config.system_prompt 
+        system_prompt: str = self.config.system_prompt
 
         if args and args.use_as_system_prompt:
             system_prompt = args.prompt
@@ -497,31 +533,26 @@ class SyntheaClient(discord.Client):
             return system_prompt
 
         return system_prompt
-    
+
     def format_chat_messages(self, messages, args):
-        """
-        Formats chat messages for easy reading and review.
+        """Formats chat messages for easy reading and review.
         """
         output = []
         for msg in messages:
-            role = msg['role'].upper()
-            content = msg['content']
+            role = msg["role"].upper()
+            content = msg["content"]
             content_string = ""
             for content_component in content:
-                if content_component['type'] == 'text':
-                    content_string += content_component['text']
+                if content_component["type"] == "text":
+                    content_string += content_component["text"]
                 else:
                     content_string += f"\n\n Content of type {content_component['type']} is attached here."
-            output.extend([
-                f"=== {role} ===",
-                content_string,
-                "\n"
-            ])
+            output.extend([f"=== {role} ===", content_string, "\n"])
         if args:
             output.append(str(args))
         if output:
             return "\n".join(output)
         return ""
-    
+
     async def get_models(self):
         return await self.llm.get_models()

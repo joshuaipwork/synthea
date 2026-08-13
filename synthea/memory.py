@@ -1,14 +1,14 @@
+import os
 from typing import Any
 
+from langchain_core.messages import BaseMessage, HumanMessage
 from mem0 import AsyncMemory
 
 from synthea.config import Config
 
-from langchain_core.messages import BaseMessage, HumanMessage
-import os
-
 bot_config = Config()
 os.environ["OPENAI_API_KEY"] = bot_config.api_key
+
 
 def create_config(llm_model: str):
     config = {
@@ -40,12 +40,15 @@ def create_config(llm_model: str):
     return config
 
 
-async def retrieve_relevant_memories(messages: list[BaseMessage], model_name: str) -> str:
-    """
-    From a list of messages, retrieves a list of relevant memories about the last user from mem0
+async def retrieve_relevant_memories(
+    messages: list[BaseMessage], model_name: str,
+) -> str:
+    """From a list of messages, retrieves a list of relevant memories about the last user from mem0
     """
     memory = await AsyncMemory.from_config(create_config(model_name))
-    user_turns: list[HumanMessage] = [msg for msg in messages if isinstance(msg, HumanMessage)]
+    user_turns: list[HumanMessage] = [
+        msg for msg in messages if isinstance(msg, HumanMessage)
+    ]
 
     # get the user id from the last user
     user_id = user_turns[-1].name
@@ -53,7 +56,9 @@ async def retrieve_relevant_memories(messages: list[BaseMessage], model_name: st
     user_content = extract_text(user_turns[-1].content)
 
     # retrieve the memories from the last user
-    relevant_memories = await memory.search(query=user_content, user_id=user_id, limit=5)
+    relevant_memories = await memory.search(
+        query=user_content, user_id=user_id, limit=5,
+    )
 
     memory_context = "\n".join(
         f"- {m['memory']}" for m in relevant_memories.get("results", [])
@@ -63,8 +68,7 @@ async def retrieve_relevant_memories(messages: list[BaseMessage], model_name: st
 
 
 async def add_memories(messages: list[BaseMessage], model_name: str) -> str:
-    """
-    From a list of messages, save information to a list of memories about the last user
+    """From a list of messages, save information to a list of memories about the last user
     from their own messages.
     """
     memory = await AsyncMemory.from_config(create_config(model_name))
@@ -95,19 +99,23 @@ Guidance:
 
     return memories
 
+
 def extract_text(content) -> str:
     if isinstance(content, list):
         return " ".join(
-            block["text"] for block in content
+            block["text"]
+            for block in content
             if isinstance(block, dict) and block.get("type") == "text"
         )
     return content
 
+
 async def get_user_memories(user_id) -> list[dict[str, Any]]:
     memory = await AsyncMemory.from_config(create_config(bot_config.default_model_name))
-    
+
     result = await memory.get_all(user_id=user_id)
     return result.get("results", [])
+
 
 async def clear_user_memory(user_id: str, persona=None):
     memory = await AsyncMemory.from_config(create_config(bot_config.default_model_name))
@@ -117,18 +125,22 @@ async def clear_user_memory(user_id: str, persona=None):
     else:
         await memory.delete_all(user_id=user_id)
 
-async def add_user_memory(new_memory: str, user_id: str, persona=None) -> dict[str, Any]:
+
+async def add_user_memory(
+    new_memory: str, user_id: str, persona=None,
+) -> dict[str, Any]:
     memory = await AsyncMemory.from_config(create_config(bot_config.default_model_name))
 
     if persona:
         return await memory.add(new_memory, user_id=user_id, agent_id=persona)
-    else:
-        return await memory.add(new_memory, user_id=user_id)
+    return await memory.add(new_memory, user_id=user_id)
+
 
 async def delete_memory(memory_id: str):
     memory = await AsyncMemory.from_config(create_config(bot_config.default_model_name))
 
     await memory.delete(memory_id)
+
 
 async def get_memory(memory_id: str) -> dict[str, Any] | None:
     memory = await AsyncMemory.from_config(create_config(bot_config.default_model_name))

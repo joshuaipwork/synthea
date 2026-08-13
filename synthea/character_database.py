@@ -1,32 +1,44 @@
 import re
 import sqlite3
-from typing import Any, Optional
-from character_errors import CharacterNotFoundError, DuplicateCharacterError, InvalidCharacterIDError, ForbiddenCharacterError
+from typing import Any
+
+from synthea.character_errors import (
+    CharacterNotFoundError,
+    DuplicateCharacterError,
+    ForbiddenCharacterError,
+    InvalidCharacterIDError,
+)
 
 conn = sqlite3.connect("mydata.db")
 
 char_id_PATTERN = r"^\w+$"  # The regex pattern for valid strings
-EDITABLE_COLUMNS = ["description", "display_name", "avatar_link", "system_prompt", "example_messages"]
+EDITABLE_COLUMNS = [
+    "description",
+    "display_name",
+    "avatar_link",
+    "system_prompt",
+    "example_messages",
+]
 
 
 class CharactersDatabase:
-    """
-    A wrapper for the characters database. Allows other modules to
+    """A wrapper for the characters database. Allows other modules to
     create, update, and retrieve characters stored in the characters database.
 
     Attributes:
         _conn (sqlite3.Connection): The SQLite database connection.
         _cursor (sqlite3.Cursor): The cursor for executing SQL commands.
+
     """
 
     def __init__(self, use_test=False):
-        """
-        Initializes a new or existing database named 'characters.db' and
+        """Initializes a new or existing database named 'characters.db' and
         creates (or verifies the existence of) a table named 'characters'.
 
         Args:
             use_test (bool): If true, then the database will be opened
                 from test_characters.db rather than characers.db.
+
         """
         if use_test:
             db_file = "test_characters.db"
@@ -52,14 +64,14 @@ class CharactersDatabase:
                 example_messages TEXT,
                 model TEXT
             );
-            """
+            """,
         )
         self._cursor.execute(
             """
             CREATE TABLE IF NOT EXISTS servers (
                 server_id INTEGER PRIMARY KEY
             );
-            """
+            """,
         )
         self._cursor.execute(
             """
@@ -70,22 +82,24 @@ class CharactersDatabase:
                 FOREIGN KEY (char_id) REFERENCES characters(id) ON DELETE CASCADE,
                 PRIMARY KEY (server_id, char_id)
             );
-            """
+            """,
         )
 
     def is_character_owner(self, char_id: str, user_id: int) -> bool:
-        """
-        Checks if a user is the owner of a character. Character owners can
+        """Checks if a user is the owner of a character. Character owners can
         modify or delete characters. They can also add or remove characters
         from a server.
 
         Args:
             char_id (str): The character to check.
             user_id (int): The id of the user to check.
+
         Returns:
             (bool): True if the character is owned by the user, otherwise False.
+
         Raises:
             (CharacterNotFoundError): If no character by char_id is found in the DB.
+
         """
         char_id = char_id.lower()
 
@@ -113,11 +127,10 @@ class CharactersDatabase:
     def can_access_character(
         self,
         char_id: str,
-        user_id: Optional[int] = None,
-        server_id: Optional[int] = None,
+        user_id: int | None = None,
+        server_id: int | None = None,
     ):
-        """
-        Checks if a user can access a character. Users can access characters in
+        """Checks if a user can access a character. Users can access characters in
         two different circumstances:
         1. The user is the owner of the character.
         2. The character has been added to the server where the user invokes the bot.
@@ -128,8 +141,10 @@ class CharactersDatabase:
             server_id (int, optional): The id of the server in which the user is
                 accessing this character.
                 If this is in a DM, leave it as None.
+
         Raises:
             (ValueError): If neither a user_id nor a server_id was passed.
+
         """
         char_id = char_id.lower()
         if not user_id and not server_id:
@@ -156,8 +171,7 @@ class CharactersDatabase:
         self,
         char_id: str,
     ) -> dict | None:
-        """
-        Loads a character from the database,
+        """Loads a character from the database,
         then returns the character as a dict.
 
         If the character doesn't exist, returns None.
@@ -173,8 +187,7 @@ class CharactersDatabase:
         return dict(rows[0]) if rows else None
 
     def create_character(self, char_id: str, user_id: int):
-        """
-        Adds a character to the database.
+        """Adds a character to the database.
         """
         char_id = char_id.lower()
         # check if the character exists
@@ -194,22 +207,23 @@ class CharactersDatabase:
         self._conn.commit()
 
     def delete_character(self, char_id: str, user_id: int):
-        """
-        Deletes a character.
+        """Deletes a character.
 
         Args:
             char_id (str): The character to delete.
             user_id (int): The discord user id of the user who wants to delete
                 this character.
+
         Raises:
             (CharacterNotFoundError): If the character doesn't exist
             (ForbiddenCharacterError): If the user doesn't own this character
+
         """
         char_id = char_id.lower()
         char = self.load_character(char_id)
         if not char:
             raise CharacterNotFoundError()
-        elif char["owner"] != user_id:
+        if char["owner"] != user_id:
             raise ForbiddenCharacterError()
 
         query = """
@@ -222,17 +236,16 @@ class CharactersDatabase:
         self._conn.commit()
 
     def update_character(
-        self, char_id: str, user_id: int, column_name: str, new_value: Any
+        self, char_id: str, user_id: int, column_name: str, new_value: Any,
     ):
-        """
-        Updates a field in a character. The character must be owned
+        """Updates a field in a character. The character must be owned
         by the user.
         """
         char_id = char_id.lower()
         char = self.load_character(char_id)
         if not char:
             raise CharacterNotFoundError()
-        elif char["owner"] != user_id:
+        if char["owner"] != user_id:
             raise ForbiddenCharacterError()
 
         # Check if the column name is editable
@@ -251,8 +264,7 @@ class CharactersDatabase:
         self._conn.commit()
 
     def remove_character_from_server(self, char_id: str, user_id: int, server_id: int):
-        """
-        Removes a character from a server. Such a character cannot be invoked
+        """Removes a character from a server. Such a character cannot be invoked
         by users on that server.
         """
         char_id = char_id.lower()
@@ -271,14 +283,14 @@ class CharactersDatabase:
         self._conn.commit()
 
     def add_character_to_server(self, char_id: str, user_id: int, server_id: int):
-        """
-        Adds a character to a server.
+        """Adds a character to a server.
         The user must be the owner of the character.
 
         Args:
             char_id (str): The character to add.
             user_id (int): The user who wants to remove the character
                 from a server.
+
         """
         char_id = char_id.lower()
         # make sure the character exists and the user can edit it.
@@ -302,12 +314,12 @@ class CharactersDatabase:
         self._conn.commit()
 
     def list_user_characters(self, user_id: int, offset=0):
-        """
-        Returns a list of the characters a user owns along with descriptions,
+        """Returns a list of the characters a user owns along with descriptions,
         if any.
 
         Args:
             user_id (int): The user to list owned characters from
+
         """
         # TODO: Limit and paginate this
         query = """
@@ -323,13 +335,13 @@ class CharactersDatabase:
         return name_list
 
     def list_server_characters(self, server_id: int, offset=0) -> list[dict[str, str]]:
-        """
-        Returns a list of the characters on a server along with descriptions,
+        """Returns a list of the characters on a server along with descriptions,
         if any.
 
         Args:
             char_id (str): The character to add.
             server_id (int): The server to list characters from
+
         """
         # TODO: Limit and paginate this
         query = """
@@ -346,8 +358,7 @@ class CharactersDatabase:
         return name_list
 
     def __del__(self):
-        """
-        When the CharacterManager is deleted, clean up DB objects
+        """When the CharacterManager is deleted, clean up DB objects
         """
         if self._conn:
             self._conn.close()

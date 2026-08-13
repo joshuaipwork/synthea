@@ -1,38 +1,37 @@
-# -*- coding: utf-8 -*-
-"""
-Generate a prompt for the AI to respond to, given the
+"""Generate a prompt for the AI to respond to, given the
 message history and persona.
 """
+
 import asyncio
 import base64
-from dataclasses import dataclass
 import mimetypes
-from typing import AsyncIterator
-from urllib.parse import urlparse
-import uuid
+import os
 import tempfile
+import uuid
+from collections.abc import AsyncIterator
+from dataclasses import dataclass
+from urllib.parse import urlparse
+
 import discord
+import pypdf
+import requests
+from synthea.config import Config
 from langchain.messages import AIMessage, HumanMessage
 from langchain_core.messages import BaseMessage
-import pypdf
-import os
-import requests
 
-from synthea.CharactersDatabase import CharactersDatabase
-from synthea.CommandParser import ChatbotParser, ParsedArgs
-from synthea import SyntheaClient
-from config import Config
-
+from synthea.character_database import CharactersDatabase
+from synthea.commands import ChatbotParser, ParsedArgs
+from synthea.constants import SYSTEM_TAG
+from synthea.model_definition import ModelDefinition
 from synthea.utilities import inference_logger
 
-from synthea.model_definition import ModelDefinition
 
 @dataclass
 class ChatHistory:
+    """A class representing the state of a chat log.
     """
-    A class representing the state of a chat log. 
-    """
-    # the list of cleaned messages in the chat, ordered from earliest to latest 
+
+    # the list of cleaned messages in the chat, ordered from earliest to latest
     messages: list[BaseMessage] = None
 
     # the set of arguments applied to the last message in the chat
@@ -44,11 +43,12 @@ class ChatHistory:
     # if true, the bot should create a system message rather than reply as itself
     create_system_prompt_message: bool = False
 
+
 @dataclass
 class DiscordMetadata:
+    """A class containing discord-specific data about the chat
     """
-    A class containing discord-specific data about the chat
-    """
+
     guild_id: int | None
     user_id: int
 
@@ -58,22 +58,65 @@ class DiscordMetadata:
             self.guild_id = message.guild.id
         self.user_id = message.author.id
 
+
 # Extensions we know are text/code even if the reported content_type is wrong or missing.
 TEXT_EXTENSIONS = {
-    ".rs", ".py", ".js", ".ts", ".jsx", ".tsx", ".go", ".java", ".c", ".h",
-    ".cpp", ".hpp", ".cs", ".rb", ".php", ".sh", ".bash", ".zsh", ".ps1",
-    ".sql", ".yaml", ".yml", ".toml", ".json", ".xml", ".ini", ".cfg",
-    ".conf", ".md", ".rst", ".txt", ".log", ".csv", ".tsv", ".html", ".css",
-    ".scss", ".lua", ".kt", ".swift", ".r", ".jl", ".dockerfile", ".gradle",
-    ".proto", ".graphql", ".vue", ".svelte",
+    ".rs",
+    ".py",
+    ".js",
+    ".ts",
+    ".jsx",
+    ".tsx",
+    ".go",
+    ".java",
+    ".c",
+    ".h",
+    ".cpp",
+    ".hpp",
+    ".cs",
+    ".rb",
+    ".php",
+    ".sh",
+    ".bash",
+    ".zsh",
+    ".ps1",
+    ".sql",
+    ".yaml",
+    ".yml",
+    ".toml",
+    ".json",
+    ".xml",
+    ".ini",
+    ".cfg",
+    ".conf",
+    ".md",
+    ".rst",
+    ".txt",
+    ".log",
+    ".csv",
+    ".tsv",
+    ".html",
+    ".css",
+    ".scss",
+    ".lua",
+    ".kt",
+    ".swift",
+    ".r",
+    ".jl",
+    ".dockerfile",
+    ".gradle",
+    ".proto",
+    ".graphql",
+    ".vue",
+    ".svelte",
 }
 
 MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024  # 10MB
 MAX_PDF_PAGES = 200
 
+
 class ReplyChainIterator:
-    """
-    An async iterator which follows a chain of discord message replies until it reaches the end
+    """An async iterator which follows a chain of discord message replies until it reaches the end
     or fails to capture the last message.
     """
 
@@ -87,13 +130,13 @@ class ReplyChainIterator:
     async def __anext__(self):
         if self.message_index == 0:
             self.message_index += 1
-            return self.message            
+            return self.message
         # go back message-by-message through the reply chain and add it to the context
         if self.message.reference:
             self.message_index += 1
             try:
                 self.message = await self.message.channel.fetch_message(
-                    self.message.reference.message_id
+                    self.message.reference.message_id,
                 )
                 return self.message
 
@@ -107,17 +150,15 @@ class ReplyChainIterator:
 
 
 class ContextManager:
-    """
-    Formats prompts for the bot to generate from.
+    """Formats prompts for the bot to generate from.
     """
 
     # A rough measure of how many character are in each token.
     EST_CHARS_PER_TOKEN: int = 3
-    REASONING_TXT_FILE_NAME: str = 'bot_thinking.txt'
+    REASONING_TXT_FILE_NAME: str = "bot_thinking.txt"
 
     def __init__(self, bot_user_id: int):
-        """
-        model (str): The model that is generating the text. Used to determine the prompt format
+        """Model (str): The model that is generating the text. Used to determine the prompt format
             and other configuration options.
         bot_user_id (str): The discord user id of the bot. Used to determine if a message came from
             the bot or from a user.
@@ -127,11 +168,11 @@ class ContextManager:
         self.bot_user_id: int = bot_user_id
 
     async def generate_chat_history_from_chat(
-        self, message: discord.Message,
+        self,
+        message: discord.Message,
         model_definition: ModelDefinition = None,
     ) -> ChatHistory:
-        """
-        Generates a prompt which includes the context from previous messages in a reply chain.
+        """Generates a prompt which includes the context from previous messages in a reply chain.
         Messages outside of the reply chain are ignored.
 
         Args:
@@ -141,23 +182,25 @@ class ContextManager:
             A tuple of (chat_history, args)
             chat_history: an openai compatible chat history
             args: a ParsedArgs representing the most recent command in the
-                chat history 
+                chat history
+
         """
         history_iterator: ReplyChainIterator = ReplyChainIterator(message)
         chat_history = await self.compile_chat_history(
-            message=message,
-            history_iterator=history_iterator
+            message=message, history_iterator=history_iterator,
         )
 
         return chat_history
 
-    async def get_args_from_chat_history(self, message: discord.Message) -> ParsedArgs | None:
-        """
-        Searches a reply chain for the last command that the user sent.
+    async def get_args_from_chat_history(
+        self, message: discord.Message,
+    ) -> ParsedArgs | None:
+        """Searches a reply chain for the last command that the user sent.
 
         Returns:
             args: a ParsedArgs representing the most recent command in the
                 chat history
+
         """
         history_iterator: ReplyChainIterator = ReplyChainIterator(message)
         config = Config()
@@ -166,7 +209,9 @@ class ContextManager:
         async for message in history_iterator:
             # some messages in the chain may be commands for the bot
             # if so, parse only the prompt in each command in order to not confuse the bot
-            raw_content, _ = await self._get_content(message, None, read_attachments=False)
+            raw_content, _ = await self._get_content(
+                message, None, read_attachments=False,
+            )
 
             # merge all the text in the message and track the number of tokens
             text: str = self._extract_text_from_content(raw_content)
@@ -175,18 +220,19 @@ class ContextManager:
             if text.lower().startswith(config.command_start_str.lower()):
                 message_args: ParsedArgs = self.parser.parse(text)
                 return message_args
-        
+
         return None
 
     async def _model_supports_vision(self, message: discord.Message) -> bool:
-        """
-        Determines whether the model that will respond supports vision, based on
+        """Determines whether the model that will respond supports vision, based on
         the model selected by the most recent command in the reply chain (falling
         back to the configured default model).
         """
         config = Config()
         args: ParsedArgs | None = await self.get_args_from_chat_history(message)
-        model_name: str = (args.model if args and args.model else config.default_model_name).lower()
+        model_name: str = (
+            args.model if args and args.model else config.default_model_name
+        ).lower()
         model_definition: ModelDefinition | None = config.models.get(model_name)
         # if the model isn't listed in the config, assume it supports vision to
         # avoid breaking models we don't have metadata for
@@ -197,8 +243,7 @@ class ContextManager:
         message: discord.Message,
         history_iterator: AsyncIterator[discord.Message],
     ) -> ChatHistory:
-        """
-        Generates an OpenAI completion endpoint compatible messages object from a reply chain,
+        """Generates an OpenAI completion endpoint compatible messages object from a reply chain,
         and returns the command arguments that apply to the current chat context.
 
         Walks the reply chain from newest to oldest, accumulating messages until the context
@@ -224,6 +269,7 @@ class ContextManager:
                 or `None` if no command was found.
                 - should_generate_system_message: `True` if the user's last command creates a
                 system message, and that system message has not yet been created.
+
         """
         config = Config()
 
@@ -241,10 +287,14 @@ class ContextManager:
         is_last_message: bool = True
         async for message in history_iterator:
             raw_content, added_tokens = await self._get_content(
-                message, history_token_limit - token_count, read_attachments=True,
+                message,
+                history_token_limit - token_count,
+                read_attachments=True,
                 vision=vision,
             )
-            text: str = self._extract_text_from_content(raw_content, exclude_attachments=True)
+            text: str = self._extract_text_from_content(
+                raw_content, exclude_attachments=True,
+            )
 
             # if the message is a command, parse it
             if text.lower().startswith(config.command_start_str.lower()):
@@ -270,7 +320,7 @@ class ContextManager:
             if (
                 message.author.id == self.bot_user_id
                 and message.embeds
-                and message.embeds[0].footer.text == SyntheaClient.SYSTEM_TAG
+                and message.embeds[0].footer.text == SYSTEM_TAG
             ):
                 continue
 
@@ -295,24 +345,31 @@ class ContextManager:
                 entry_type = entry.get("type")
                 # Include non-text entries (images, etc.) and text attachment entries
                 if entry_type != "text":
-                    content.append({"type": entry_type, entry_type: entry.get(entry_type)})
+                    content.append(
+                        {"type": entry_type, entry_type: entry.get(entry_type)},
+                    )
                 elif entry.get("text", "").startswith("\n\n[File"):
                     # text attachment content -- user prefix is already baked in above
                     content.append(entry)
 
             if message.author.id == self.bot_user_id:
-                chat_history.messages.insert(0, AIMessage(content=content, name=str(user_id)))
+                chat_history.messages.insert(
+                    0, AIMessage(content=content, name=str(user_id)),
+                )
             else:
-                chat_history.messages.insert(0, HumanMessage(content=content, name=str(user_id)))
+                chat_history.messages.insert(
+                    0, HumanMessage(content=content, name=str(user_id)),
+                )
 
             token_count += added_tokens
 
         return chat_history
 
-    async def _read_attachment(self, attachment: discord.Attachment) -> tuple[str, str] | None:
-        """
-        Args:
-            attachment: The attachment to read 
+    async def _read_attachment(
+        self, attachment: discord.Attachment,
+    ) -> tuple[str, str] | None:
+        """Args:
+            attachment: The attachment to read
         Returns:
             (openai_content_type, attachment_string)
             A tuple with the openai type of the contents of the image, and a string representing it.
@@ -321,6 +378,7 @@ class ContextManager:
 
             ("text", "This is the content of the PDF")
             ("image_url", "https://images.freeimages.com/images/large-previews/cd7/gingko-biloba-1058537.jpg")
+
         """
         openai_content_type = ""
         attachment_string = ""
@@ -330,7 +388,9 @@ class ContextManager:
 
         # safety checks
         if attachment.size > MAX_ATTACHMENT_BYTES:
-            inference_logger.info(f"Skipping [{attachment.filename}]: too large ({attachment.size} bytes).")
+            inference_logger.info(
+                f"Skipping [{attachment.filename}]: too large ({attachment.size} bytes).",
+            )
             return None
 
         is_text = (
@@ -343,7 +403,9 @@ class ContextManager:
             inference_logger.info("Saving the pdf attachment")
             openai_content_type = "text"
             with tempfile.TemporaryDirectory() as tmpdir:
-                safe_name = f"{uuid.uuid4().hex}_{os.path.basename(attachment.filename)}"
+                safe_name = (
+                    f"{uuid.uuid4().hex}_{os.path.basename(attachment.filename)}"
+                )
                 temp_path = os.path.join(tmpdir, safe_name)
                 await attachment.save(temp_path)
                 attachment_string = await _extract_pdf_text(temp_path)
@@ -353,23 +415,37 @@ class ContextManager:
             attachment_string = attachment.url
         elif is_text or _looks_like_text(await attachment.read()):
             if attachment.filename == ContextManager.REASONING_TXT_FILE_NAME:
-                inference_logger.info("Skipping txt file because it contains bot reasoning.")
+                inference_logger.info(
+                    "Skipping txt file because it contains bot reasoning.",
+                )
                 return None
             openai_content_type = "text"
-            attachment_string = (await attachment.read()).decode("utf-8", errors="replace")
+            attachment_string = (await attachment.read()).decode(
+                "utf-8", errors="replace",
+            )
 
-        inference_logger.info(f"Obtained the text from the [{attachment.content_type}] attachment as a string")
-        inference_logger.info(f"Recorded as ({openai_content_type}, {attachment_string[:200]!r})")
+        inference_logger.info(
+            f"Obtained the text from the [{attachment.content_type}] attachment as a string",
+        )
+        inference_logger.info(
+            f"Recorded as ({openai_content_type}, {attachment_string[:200]!r})",
+        )
         return (openai_content_type, attachment_string)
 
-    async def _get_linked_content(self, message: discord.Message, remaining_tokens: int, config: Config) -> tuple[list[dict[str, str]], int]:
-        """
-        Gets 
+    async def _get_linked_content(
+        self, message: discord.Message, remaining_tokens: int, config: Config,
+    ) -> tuple[list[dict[str, str]], int]:
+        """Gets
         """
 
-    async def _get_content(self, message: discord.Message, remaining_tokens: int, read_attachments: bool=False, vision: bool=True) -> tuple[list[dict[str, str]], int]:
-        """
-        Gets the text and attachments from a message and counts the tokens.
+    async def _get_content(
+        self,
+        message: discord.Message,
+        remaining_tokens: int,
+        read_attachments: bool = False,
+        vision: bool = True,
+    ) -> tuple[list[dict[str, str]], int]:
+        """Gets the text and attachments from a message and counts the tokens.
         """
         contents: list[dict[str, str]] = []
         tokens = 0
@@ -394,85 +470,115 @@ class ContextManager:
                 if attachment.filename == ContextManager.REASONING_TXT_FILE_NAME:
                     # dont attach reasoning so the bot doesn't get clogged by its own thoughts
                     continue
-                elif not attachment_content or attachment_content.isspace():
-                    content = {"type": "text", "text": f"\n\n[A file was attached but it is empty or unreadable]"}
+                if not attachment_content or attachment_content.isspace():
+                    content = {
+                        "type": "text",
+                        "text": "\n\n[A file was attached but it is empty or unreadable]",
+                    }
                     tokens += len(content["text"]) // self.EST_CHARS_PER_TOKEN
                 elif openai_content_type == "image_url" and vision:
-                    content = {"type": "image_url", "image_url": {"url": self.image_to_base64(attachment_content)}}
+                    content = {
+                        "type": "image_url",
+                        "image_url": {"url": self.image_to_base64(attachment_content)},
+                    }
                     # TODO: calculate the number of tokens associated with image
                 elif openai_content_type == "image_url":
                     # the model doesn't support vision, so don't send the image to it
-                    content = {"type": "text", "text": f"\n\n[Image attachment: {attachment.filename} (not shown because the model does not support vision)]"}
+                    content = {
+                        "type": "text",
+                        "text": f"\n\n[Image attachment: {attachment.filename} (not shown because the model does not support vision)]",
+                    }
                     tokens += len(content["text"]) // self.EST_CHARS_PER_TOKEN
-                elif remaining_tokens is not None and (len(attachment_content) // self.EST_CHARS_PER_TOKEN) > remaining_tokens:
-                    content = {"type": "text", "text": f"\n\n[File too large to include: {attachment.filename}]"}
+                elif (
+                    remaining_tokens is not None
+                    and (len(attachment_content) // self.EST_CHARS_PER_TOKEN)
+                    > remaining_tokens
+                ):
+                    content = {
+                        "type": "text",
+                        "text": f"\n\n[File too large to include: {attachment.filename}]",
+                    }
                     tokens += len(content["text"]) // self.EST_CHARS_PER_TOKEN
                 else:
-                    content = {"type": "text", "text": f"\n\n[File attachment: {attachment.filename}]\n{attachment_content}"}
+                    content = {
+                        "type": "text",
+                        "text": f"\n\n[File attachment: {attachment.filename}]\n{attachment_content}",
+                    }
                     tokens += len(content["text"]) // self.EST_CHARS_PER_TOKEN
                 contents.append(content)
 
         return contents, tokens
-    
-    def _extract_text_from_content(self, content: list[dict[str, str]], exclude_attachments: bool = False) -> str:
+
+    def _extract_text_from_content(
+        self, content: list[dict[str, str]], exclude_attachments: bool = False,
+    ) -> str:
         text = ""
         for entry in content:
-            if entry["type"] == "text" and not (exclude_attachments and entry["text"].startswith("\n\n[File")):
+            if entry["type"] == "text" and not (
+                exclude_attachments and entry["text"].startswith("\n\n[File")
+            ):
                 text += entry["text"]
         return text
 
     def _get_message_sender_details(self, message: discord.Message) -> tuple[str, str]:
-        """
-        Gets the user ID and display name of the person sending the message
+        """Gets the user ID and display name of the person sending the message
 
         Returns:
             a tuple of the id and display_name
+
         """
         # get the character's name if they are a character
-        if message.author.id == self.bot_user_id and message.embeds and message.embeds[0].footer and message.embeds[0].footer.text != SyntheaClient.SYSTEM_TAG:
+        if (
+            message.author.id == self.bot_user_id
+            and message.embeds
+            and message.embeds[0].footer
+            and message.embeds[0].footer.text != SYSTEM_TAG
+        ):
             char_id: str = message.embeds[0].footer.text
-            char_data: dict[str, str] = self.characters_database.load_character(message.embeds[0].footer.text)
+            char_data: dict[str, str] = self.characters_database.load_character(
+                message.embeds[0].footer.text,
+            )
             return char_id, char_data["display_name"]
         # inject You if no character is specified
-        elif message.author.id == self.bot_user_id:
+        if message.author.id == self.bot_user_id:
             return self.bot_user_id, "You"
             # TODO: Figure out how to square this with -sp
         # if another user inject the user's name into the prompt so the bot knows it
-        else:
-            return message.author.id, message.author.display_name
+        return message.author.id, message.author.display_name
 
     def image_to_base64(self, image_path):
-        """
-        Downloads an image and converts into base 64 with a mimetype declaration.
+        """Downloads an image and converts into base 64 with a mimetype declaration.
         """
         # Check if the path is a URL
-        is_url = urlparse(image_path).scheme in ['http', 'https']
-        
+        is_url = urlparse(image_path).scheme in ["http", "https"]
+
         # Get the content and mime type
         if is_url:
             response = requests.get(image_path)
             image_content = response.content
             # Try to get mime type from response headers first
-            mime_type = response.headers.get('content-type')
+            mime_type = response.headers.get("content-type")
             if not mime_type:
                 # Fallback to guessing from URL
                 mime_type = mimetypes.guess_type(image_path)[0]
         else:
-            with open(image_path, 'rb') as img_file:
+            with open(image_path, "rb") as img_file:
                 image_content = img_file.read()
             mime_type = mimetypes.guess_type(image_path)[0]
-        
+
         # If mime type still couldn't be determined, default to jpeg
         if mime_type is None:
-            mime_type = 'image/jpeg'
-        
+            mime_type = "image/jpeg"
+
         # Convert to base64
-        b64_string = base64.b64encode(image_content).decode('utf-8')
-        return f'data:{mime_type};base64,{b64_string}'
+        b64_string = base64.b64encode(image_content).decode("utf-8")
+        return f"data:{mime_type};base64,{b64_string}"
+
 
 def _looks_like_text(data: bytes) -> bool:
     """Heuristic: real text files essentially never contain null bytes,
-    and should be decodable as UTF-8 (or close enough)."""
+    and should be decodable as UTF-8 (or close enough).
+    """
     if b"\x00" in data[:8192]:
         return False
     try:
@@ -481,6 +587,7 @@ def _looks_like_text(data: bytes) -> bool:
     except UnicodeDecodeError:
         return False
 
+
 async def _extract_pdf_text(path: str) -> str:
     def _extract():
         reader = pypdf.PdfReader(path)
@@ -488,4 +595,5 @@ async def _extract_pdf_text(path: str) -> str:
         for page in reader.pages[:MAX_PDF_PAGES]:
             text += "\n" + (page.extract_text() or "")
         return text
+
     return await asyncio.wait_for(asyncio.to_thread(_extract), timeout=10)

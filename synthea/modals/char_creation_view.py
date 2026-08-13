@@ -1,19 +1,21 @@
-from synthea.modals.char_creation_step import CharCreationStep
-from typing import Callable
-import yaml
+from collections.abc import Callable
+
 import discord
+import yaml
 from discord import TextStyle, ui
 from discord.enums import ButtonStyle
 from discord.interactions import Interaction
-from synthea.CharactersDatabase import CharactersDatabase
+
+from synthea.character_database import CharactersDatabase
 from synthea.character_errors import (
     DuplicateCharacterError,
     InvalidCharacterIDError,
 )
+from synthea.modals.char_creation_step import CharCreationStep
+
 
 class CharCreationView(ui.View):
-    """
-    A view used to navigate the character creation menu and access modals for
+    """A view used to navigate the character creation menu and access modals for
     for creating characters. This view is shown with the /create_character command.
     """
 
@@ -27,31 +29,31 @@ class CharCreationView(ui.View):
             (
                 CharCreationStep.NAME,
                 lambda interaction, new_val: self.enter_value(
-                    interaction, new_val, CharCreationStep.NAME
+                    interaction, new_val, CharCreationStep.NAME,
                 ),
             ),
             (
                 CharCreationStep.SYSTEM_PROMPT,
                 lambda interaction, new_val: self.enter_value(
-                    interaction, new_val, CharCreationStep.SYSTEM_PROMPT
+                    interaction, new_val, CharCreationStep.SYSTEM_PROMPT,
                 ),
             ),
             (
                 CharCreationStep.EXAMPLE_MESSAGES,
                 lambda interaction, new_val: self.enter_value(
-                    interaction, new_val, CharCreationStep.EXAMPLE_MESSAGES
+                    interaction, new_val, CharCreationStep.EXAMPLE_MESSAGES,
                 ),
             ),
             (
                 CharCreationStep.AVATAR,
                 lambda interaction, new_val: self.enter_value(
-                    interaction, new_val, CharCreationStep.AVATAR
+                    interaction, new_val, CharCreationStep.AVATAR,
                 ),
             ),
             (
                 CharCreationStep.DESCRIPTION,
                 lambda interaction, new_val: self.enter_value(
-                    interaction, new_val, CharCreationStep.DESCRIPTION
+                    interaction, new_val, CharCreationStep.DESCRIPTION,
                 ),
             ),
             (CharCreationStep.OUTRO, None),
@@ -65,7 +67,7 @@ class CharCreationView(ui.View):
 
         # retrieve data on modals and descriptions from yaml
         with open(
-            "synthea/menu_dialogs/create_character.yaml", "r", encoding="utf-8"
+            "synthea/menu_dialogs/create_character.yaml", encoding="utf-8",
         ) as file:
             self.dialogs = yaml.safe_load(file)
 
@@ -91,11 +93,8 @@ class CharCreationView(ui.View):
         if not callback:
             self.enter_button.disabled = True
 
-        # can't move past the last step in the menu
-        if self.step_index == len(self.steps) - 1:
-            self.next_step_button.disabled = True
-        # can't go to next step if this step isn't finished
-        elif current_step not in self.data_dict:
+        # can't move past the last step in the menu, or if the current step hasn't been filled out yet
+        if self.step_index == len(self.steps) - 1 or current_step not in self.data_dict:
             self.next_step_button.disabled = True
         else:
             self.next_step_button.disabled = False
@@ -129,7 +128,7 @@ class CharCreationView(ui.View):
                 dialogs=self.dialogs,
                 callback=callback,
                 title=self.dialogs[current_step.value]["modal_title"],
-            )
+            ),
         )
 
     async def enter_id(self, interaction: discord.Interaction, new_id: str):
@@ -168,14 +167,14 @@ class CharCreationView(ui.View):
             title: str,
             timeout: float | None = None,
         ) -> None:
-            """
-            Creates the modal, taking in the standard variables of a modal, along with
+            """Creates the modal, taking in the standard variables of a modal, along with
             the callback to be perfomed on submit.
 
             Args:
                 step (CharCreationStep): The step of character creation this modal represents.
                 dialogs (dict): The dialog data from the menu.
                 callback (Callable): The callback to run on submitting
+
             """
             super().__init__(title=title, timeout=timeout)
             text_data = dialogs[step.value]
@@ -194,7 +193,7 @@ class CharCreationView(ui.View):
                 placeholder=text_data["modal_placeholder"],
                 max_length=max_length,
                 style=style,
-                required=text_data["required"]
+                required=text_data["required"],
             )
             self.add_item(self.value_input)
 

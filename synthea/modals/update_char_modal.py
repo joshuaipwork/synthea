@@ -1,16 +1,16 @@
 import discord
 from discord import TextStyle, ui
 from discord.interactions import Interaction
-from synthea.CharactersDatabase import CharactersDatabase
+from synthea.character_database import CharactersDatabase
+
 from synthea.character_errors import (
     ForbiddenCharacterError,
 )
-from synthea.modals.CharCreationStep import CharCreationStep
+from synthea.modals.char_creation_step import CharCreationStep
 
 
 class UpdateCharModal(ui.Modal):
-    """
-    A modal used to update all the attributes of a character at once.
+    """A modal used to update all the attributes of a character at once.
     """
 
     def __init__(self, char_id: str, interaction: Interaction):
@@ -58,7 +58,9 @@ class UpdateCharModal(ui.Modal):
         self.example_messages = ui.TextInput(
             label="Example messages",
             style=TextStyle.paragraph,
-            default=char_data["example_messages"] if "example_messages" in char_data else "",
+            default=char_data["example_messages"]
+            if "example_messages" in char_data
+            else "",
             required=False,
             max_length=2000,
         )
@@ -68,20 +70,35 @@ class UpdateCharModal(ui.Modal):
     async def on_submit(self, interaction: discord.Interaction):
         """When submitted, update database with new records."""
         self.char_db.update_character(
-            self.char_id, interaction.user.id, CharCreationStep.AVATAR.value, self.avatar.value
+            self.char_id,
+            interaction.user.id,
+            CharCreationStep.AVATAR.value,
+            self.avatar.value,
         )
         self.char_db.update_character(
-            self.char_id, interaction.user.id, CharCreationStep.DESCRIPTION.value, self.description.value
+            self.char_id,
+            interaction.user.id,
+            CharCreationStep.DESCRIPTION.value,
+            self.description.value,
         )
         self.char_db.update_character(
-            self.char_id, interaction.user.id, CharCreationStep.NAME.value, self.name.value
+            self.char_id,
+            interaction.user.id,
+            CharCreationStep.NAME.value,
+            self.name.value,
         )
         self.char_db.update_character(
-            self.char_id, interaction.user.id, CharCreationStep.SYSTEM_PROMPT.value, self.system_prompt.value
+            self.char_id,
+            interaction.user.id,
+            CharCreationStep.SYSTEM_PROMPT.value,
+            self.system_prompt.value,
         )
         self.char_db.update_character(
-            self.char_id, interaction.user.id, CharCreationStep.EXAMPLE_MESSAGES.value, self.example_messages.value
+            self.char_id,
+            interaction.user.id,
+            CharCreationStep.EXAMPLE_MESSAGES.value,
+            self.example_messages.value,
         )
         await interaction.response.send_message(
-            "Your character has been updated!", ephemeral=True
+            "Your character has been updated!", ephemeral=True,
         )

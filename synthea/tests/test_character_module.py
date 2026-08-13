@@ -1,12 +1,14 @@
 # pylint: disable=missing-function-docstring, redefined-outer-name, line-too-long
 import os
+
 import pytest
-from synthea.CharactersDatabase import CharactersDatabase
+
 from synthea.character_errors import (
     CharacterNotFoundError,
-    ForbiddenCharacterError,
     DuplicateCharacterError,
+    ForbiddenCharacterError,
 )
+from synthea.character_database import CharactersDatabase
 
 
 @pytest.fixture(scope="module")
@@ -16,7 +18,7 @@ def manager():
         os.remove("test_characters.db")
 
     manager = CharactersDatabase(use_test=True)
-    yield manager  # This will return the SQL object to the test functions
+    return manager  # This will return the SQL object to the test functions
 
     # don't delete the test database so it can be inspected later
 
@@ -25,7 +27,7 @@ def test_load_invalid_character(manager: CharactersDatabase):
     assert manager.load_character("invalid_character") is None
 
 
-@pytest.mark.dependency()
+@pytest.mark.dependency
 def test_create_character(manager: CharactersDatabase):
     manager.create_character("test_character", 100)
     assert manager.can_access_character("test_character", 100)
@@ -46,7 +48,7 @@ def test_create_duplicate_character(manager: CharactersDatabase):
 def test_load_forbidden_character(manager: CharactersDatabase):
     manager.create_character("test_load_forbidden_character", 100)
     assert not manager.can_access_character(
-        "test_load_forbidden_character", user_id=500
+        "test_load_forbidden_character", user_id=500,
     )
     assert not manager.is_character_owner("test_load_forbidden_character", user_id=500)
 
@@ -164,14 +166,14 @@ def test_list_user_no_chars(manager: CharactersDatabase):
 
 
 @pytest.mark.dependency(
-    depends=["test_create_character", "test_add_character_to_server"]
+    depends=["test_create_character", "test_add_character_to_server"],
 )
 def test_list_server(manager: CharactersDatabase):
     # add one character, list it
     manager.create_character("list_server_test_char_1", 100)
     manager.add_character_to_server("list_server_test_char_1", 100, 400)
     manager.update_character(
-        "list_server_test_char_1", 100, "description", "test_description"
+        "list_server_test_char_1", 100, "description", "test_description",
     )
     char_list = manager.list_server_characters(400)
 

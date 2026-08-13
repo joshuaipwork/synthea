@@ -10,4 +10,4 @@ VENV_PATH="$SCRIPT_DIR/venv/bin/python"
 echo "Using Python from: $VENV_PATH"
 
 # Run your program
-$VENV_PATH "$SCRIPT_DIR/synthea/Synthea.py"
+$VENV_PATH "$SCRIPT_DIR/synthea/main.py"

@@ -1,39 +1,40 @@
-"""
-The starting point for the program
+"""The starting point for the program
 """
 
 import os
 from pathlib import Path
-from typing import List
+
 import discord
-from discord import app_commands
 import openai
 import yaml
+from synthea.config import Config
+from discord import app_commands
 
-from config import Config
 from synthea import memory, rag
-from synthea.model_definition import ModelDefinition
-from synthea.SyntheaClient import SyntheaClient
-from synthea.modals.char_creation_view import CharCreationView
-from synthea.modals.memory_pages_view import MemoryPagesView, DEFAULT_PAGE_SIZE
-from synthea.modals.update_char_modal import UpdateCharModal
-from synthea.modals.char_creation_step import CharCreationStep
 from synthea.character_errors import (
     CharacterNotFoundError,
     ForbiddenCharacterError,
 )
+from synthea.client import SyntheaClient
+from synthea.modals.char_creation_step import CharCreationStep
+from synthea.modals.char_creation_view import CharCreationView
+from synthea.modals.memory_pages_view import DEFAULT_PAGE_SIZE, MemoryPagesView
+from synthea.modals.update_char_modal import UpdateCharModal
+from synthea.model_definition import ModelDefinition
+
 
 def format_char_list(char_list: list[dict[str, str]]) -> str:
     """Generates a formatted text version of a list of characters and descriptions"""
     output = ""
     # I'd love to make a table, but discord doesn't support it. Markdown lists are the best I have
     for char in char_list:
-        output += f'\n{char["id"]}'
-        if "display_name" in char and char["display_name"]:
+        output += f"\n{char['id']}"
+        if char.get("display_name"):
             output += f" ({char['display_name']})"
-        if "description" in char and char["description"]:
-            output += f'\n> {char["description"]}'
+        if char.get("description"):
+            output += f"\n> {char['description']}"
     return output
+
 
 def format_model_list(model_list: list[openai.types.model.Model]) -> str:
     """Generates a formatted text version of a list of characters and descriptions"""
@@ -45,17 +46,18 @@ def format_model_list(model_list: list[openai.types.model.Model]) -> str:
         if model.id not in config.models:
             continue
         model_definition: ModelDefinition = config.models[model.id]
-        output += f'\n{model.id}   '
+        output += f"\n{model.id}   "
         if model_definition.vision:
-            output += ' 👀'
+            output += " 👀"
         if model_definition.reasoning:
-            output += ' 🤔'
+            output += " 🤔"
         if model_definition.description:
-            output += f'\n> {model_definition.description}'
+            output += f"\n> {model_definition.description}"
     return output
 
+
 if __name__ == "__main__":
-    with open("config.yaml", "r", encoding="utf-8") as file:
+    with open("config.yaml", encoding="utf-8") as file:
         token = yaml.safe_load(file)["client_token"]
 
     # set up the discord client. The client and takes actions on our behalf
@@ -77,7 +79,7 @@ if __name__ == "__main__":
     async def create_character_ui(interaction: discord.Interaction):
         """Opens the create_character UI for the user."""
         with open(
-            "synthea/menu_dialogs/create_character.yaml", "r", encoding="utf-8"
+            "synthea/menu_dialogs/create_character.yaml", encoding="utf-8",
         ) as dialog_file:
             dialogs = yaml.safe_load(dialog_file)
         await interaction.response.send_message(
@@ -101,7 +103,6 @@ if __name__ == "__main__":
         except ForbiddenCharacterError as err:
             await interaction.response.send_message(f"❌ {err}", ephemeral=True)
 
-
     @tree.command(
         name="delete_character",
         description="Delete an character you own",
@@ -112,13 +113,12 @@ if __name__ == "__main__":
         try:
             client.char_db.delete_character(char_id, interaction.user.id)
             await interaction.response.send_message(
-                f"{char_id} was deleted.", ephemeral=True
+                f"{char_id} was deleted.", ephemeral=True,
             )
         except CharacterNotFoundError as err:
             await interaction.response.send_message(f"❌ {err}", ephemeral=True)
         except ForbiddenCharacterError as err:
             await interaction.response.send_message(f"❌ {err}", ephemeral=True)
-
 
     @tree.command(
         name="add_character",
@@ -128,20 +128,21 @@ if __name__ == "__main__":
         try:
             if not interaction.guild:
                 await interaction.response.send_message(
-                    "❌ You are not speaking from a server!", ephemeral=True
+                    "❌ You are not speaking from a server!", ephemeral=True,
                 )
             # will raise errors if the character can't be updated
             client.char_db.add_character_to_server(
-                char_id=char_id, user_id=interaction.user.id, server_id=interaction.guild.id
+                char_id=char_id,
+                user_id=interaction.user.id,
+                server_id=interaction.guild.id,
             )
             await interaction.response.send_message(
-                f"{char_id} has been added to the server!"
+                f"{char_id} has been added to the server!",
             )
         except CharacterNotFoundError as err:
             await interaction.response.send_message(f"❌ {err}", ephemeral=True)
         except ForbiddenCharacterError as err:
             await interaction.response.send_message(f"❌ {err}", ephemeral=True)
-
 
     @tree.command(
         name="remove_character",
@@ -151,20 +152,21 @@ if __name__ == "__main__":
         try:
             if not interaction.guild:
                 await interaction.response.send_message(
-                    "❌ You are not speaking from a server!", ephemeral=True
+                    "❌ You are not speaking from a server!", ephemeral=True,
                 )
             # will raise errors if the character can't be updated
             client.char_db.remove_character_from_server(
-                char_id=char_id, user_id=interaction.user.id, server_id=interaction.guild.id
+                char_id=char_id,
+                user_id=interaction.user.id,
+                server_id=interaction.guild.id,
             )
             await interaction.response.send_message(
-                f"{char_id} has been removed from the server!"
+                f"{char_id} has been removed from the server!",
             )
         except CharacterNotFoundError as err:
             await interaction.response.send_message(f"❌ {err}", ephemeral=True)
         except ForbiddenCharacterError as err:
             await interaction.response.send_message(f"❌ {err}", ephemeral=True)
-
 
     @tree.command(
         name="list_characters",
@@ -185,11 +187,12 @@ if __name__ == "__main__":
         char_list = client.char_db.list_server_characters(interaction.guild.id)
         if not char_list:
             await interaction.response.send_message(
-                "There are no public characters on this server.", ephemeral=True
+                "There are no public characters on this server.", ephemeral=True,
             )
         else:
-            await interaction.response.send_message(format_char_list(char_list), ephemeral=True)
-
+            await interaction.response.send_message(
+                format_char_list(char_list), ephemeral=True,
+            )
 
     @tree.command(
         name="list_owned_characters",
@@ -200,10 +203,12 @@ if __name__ == "__main__":
         char_list = client.char_db.list_user_characters(interaction.user.id)
         if not char_list:
             await interaction.response.send_message(
-                "You don't own any characters.", ephemeral=True
+                "You don't own any characters.", ephemeral=True,
             )
         else:
-            await interaction.response.send_message(format_char_list(char_list), ephemeral=True)
+            await interaction.response.send_message(
+                format_char_list(char_list), ephemeral=True,
+            )
 
     @tree.command(
         name="list_models",
@@ -211,9 +216,10 @@ if __name__ == "__main__":
     )
     async def send_models_list(interaction: discord.Interaction):
         """Sends a list of available models to the interacter"""
-        model_list: List[openai.types.model.Model] = await client.get_models()
-        await interaction.response.send_message(format_model_list(model_list), ephemeral=True)
-
+        model_list: list[openai.types.model.Model] = await client.get_models()
+        await interaction.response.send_message(
+            format_model_list(model_list), ephemeral=True,
+        )
 
     @tree.command(
         name="delete_memories",
@@ -222,12 +228,14 @@ if __name__ == "__main__":
     async def delete_memories(interaction: discord.Interaction):
         if client.config.enable_memory is False:
             await interaction.response.send_message(
-                "Memory is not enabled on this bot.", ephemeral=True
+                "Memory is not enabled on this bot.", ephemeral=True,
             )
             return
-        await interaction.response.defer(ephemeral=True) 
+        await interaction.response.defer(ephemeral=True)
         await memory.clear_user_memory(str(interaction.user.id))
-        await interaction.followup.send("The memory about you has been cleared.", ephemeral=True)
+        await interaction.followup.send(
+            "The memory about you has been cleared.", ephemeral=True,
+        )
 
     @tree.command(
         name="view_memory",
@@ -236,15 +244,17 @@ if __name__ == "__main__":
     async def view_memory(interaction: discord.Interaction):
         if client.config.enable_memory is False:
             await interaction.response.send_message(
-                "Memory is not enabled on this bot.", ephemeral=True
+                "Memory is not enabled on this bot.", ephemeral=True,
             )
             return
 
-        await interaction.response.defer(ephemeral=True) 
+        await interaction.response.defer(ephemeral=True)
         memories = await memory.get_user_memories(str(interaction.user.id))
-        
+
         if not memories:
-            await interaction.followup.send("There are no memories stored about you.", ephemeral=True)
+            await interaction.followup.send(
+                "There are no memories stored about you.", ephemeral=True,
+            )
             return
 
         # if there's only one page worth of memories, just send them as plain text
@@ -256,8 +266,9 @@ if __name__ == "__main__":
             return
 
         view = MemoryPagesView(memories)
-        await interaction.followup.send(view._build_content(), ephemeral=True, view=view)
-
+        await interaction.followup.send(
+            view._build_content(), ephemeral=True, view=view,
+        )
 
     @tree.command(
         name="add_memory",
@@ -266,22 +277,27 @@ if __name__ == "__main__":
     async def add_memory(interaction: discord.Interaction, new_memory: str):
         if client.config.enable_memory is False:
             await interaction.response.send_message(
-                "Memory is not enabled on this bot.", ephemeral=True
+                "Memory is not enabled on this bot.", ephemeral=True,
             )
             return
 
-        await interaction.response.defer(ephemeral=True) 
+        await interaction.response.defer(ephemeral=True)
 
         results = await memory.add_user_memory(new_memory, str(interaction.user.id))
 
         memory_summary = ""
         if results["results"]:
             for mem in results["results"]:
-                memory_summary += f"{mem["memory"]} ({mem['id']})\n"
+                memory_summary += f"{mem['memory']} ({mem['id']})\n"
 
-            await interaction.followup.send(f"Stored in memory: \n{memory_summary}", ephemeral=True)
+            await interaction.followup.send(
+                f"Stored in memory: \n{memory_summary}", ephemeral=True,
+            )
         else:
-            await interaction.followup.send("No new memory stored, are you sure this is something new?", ephemeral=True)
+            await interaction.followup.send(
+                "No new memory stored, are you sure this is something new?",
+                ephemeral=True,
+            )
 
     @tree.command(
         name="delete_memory",
@@ -290,53 +306,70 @@ if __name__ == "__main__":
     async def delete_memory(interaction: discord.Interaction, memory_id: str):
         if client.config.enable_memory is False:
             await interaction.response.send_message(
-                "Memory is not enabled on this bot.", ephemeral=True
+                "Memory is not enabled on this bot.", ephemeral=True,
             )
             return
 
-        await interaction.response.defer(ephemeral=True) 
+        await interaction.response.defer(ephemeral=True)
         m = await memory.get_memory(memory_id)
 
         if not m:
-            await interaction.followup.send("Could not find the memory.", ephemeral=True)
+            await interaction.followup.send(
+                "Could not find the memory.", ephemeral=True,
+            )
 
         if m["user_id"] != str(interaction.user.id):
-            await interaction.followup.send("This memory is not about you.", ephemeral=True)
+            await interaction.followup.send(
+                "This memory is not about you.", ephemeral=True,
+            )
             return
-        
+
         await memory.delete_memory(memory_id)
 
-        await interaction.followup.send(f"Deleted memory {m["memory"]}", ephemeral=True)
+        await interaction.followup.send(f"Deleted memory {m['memory']}", ephemeral=True)
 
     @tree.command(
         name="save_document",
         description="Upload a doc to the bot, overriding if required. Documents are per-server and per-user in DMs.",
     )
-    async def save_document(interaction: discord.Interaction, document: discord.Attachment):
+    async def save_document(
+        interaction: discord.Interaction, document: discord.Attachment,
+    ):
         if client.config.enable_rag_lookup is False:
             await interaction.response.send_message(
-                "RAG lookup is not enabled on this bot.", ephemeral=True
+                "RAG lookup is not enabled on this bot.", ephemeral=True,
             )
             return
 
-        await interaction.response.defer(ephemeral=True) 
-        save_directory: str = rag.get_document_path(interaction.guild_id, interaction.user.id)
+        await interaction.response.defer(ephemeral=True)
+        save_directory: str = rag.get_document_path(
+            interaction.guild_id, interaction.user.id,
+        )
 
         # check if the document is one of the valid extensions
         if Path(document.filename).suffix not in rag.VALID_EXTENSIONS:
-            await interaction.followup.send(f"The document must be one of: {", ".join(rag.VALID_EXTENSIONS)}!", ephemeral=True)
+            await interaction.followup.send(
+                f"The document must be one of: {', '.join(rag.VALID_EXTENSIONS)}!",
+                ephemeral=True,
+            )
             return
 
         file_path = os.path.join(save_directory, document.filename)
-        
+
         try:
             # Save the attachment to the local path
             await document.save(file_path)
-            await rag.ingest_document(file_path, interaction.guild_id, interaction.user.id)
-            await interaction.followup.send(f"Successfully saved `{document.filename}`", ephemeral=True)
+            await rag.ingest_document(
+                file_path, interaction.guild_id, interaction.user.id,
+            )
+            await interaction.followup.send(
+                f"Successfully saved `{document.filename}`", ephemeral=True,
+            )
         except Exception as e:
             await os.remove(file_path)
-            await interaction.followup.send(f"An error occurred while saving the file: {e}", ephemeral=True)
+            await interaction.followup.send(
+                f"An error occurred while saving the file: {e}", ephemeral=True,
+            )
 
     @tree.command(
         name="delete_document",
@@ -345,18 +378,22 @@ if __name__ == "__main__":
     async def delete_document(interaction: discord.Interaction, filename: str):
         if client.config.enable_rag_lookup is False:
             await interaction.response.send_message(
-                "RAG lookup is not enabled on this bot.", ephemeral=True
+                "RAG lookup is not enabled on this bot.", ephemeral=True,
             )
             return
 
-        await interaction.response.defer(ephemeral=True) 
+        await interaction.response.defer(ephemeral=True)
 
-        save_directory = rag.get_document_path(interaction.guild_id, interaction.user.id)
+        save_directory = rag.get_document_path(
+            interaction.guild_id, interaction.user.id,
+        )
         file_path = os.path.join(save_directory, filename)
 
         if os.path.exists(file_path):
             os.remove(file_path)
-            await rag.delete_document(file_path, interaction.guild_id, interaction.user.id)
+            await rag.delete_document(
+                file_path, interaction.guild_id, interaction.user.id,
+            )
             await interaction.followup.send(f"{file_path} has been deleted.")
         else:
             await interaction.followup.send(f"The file {file_path} does not exist.")
@@ -368,12 +405,14 @@ if __name__ == "__main__":
     async def list_documents(interaction: discord.Interaction):
         if client.config.enable_rag_lookup is False:
             await interaction.response.send_message(
-                "RAG lookup is not enabled on this bot.", ephemeral=True
+                "RAG lookup is not enabled on this bot.", ephemeral=True,
             )
             return
-        
-        await interaction.response.defer(ephemeral=True) 
-        save_directory = rag.get_document_path(interaction.guild_id, interaction.user.id)
+
+        await interaction.response.defer(ephemeral=True)
+        save_directory = rag.get_document_path(
+            interaction.guild_id, interaction.user.id,
+        )
 
         server_docs = os.listdir(save_directory)
         if not server_docs:
