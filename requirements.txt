@@ -2,7 +2,8 @@ discord>=2.3.2
 ruamel.yaml
 trafilatura
 pypdf
-pytest==7.4.0
+pytest>=7.4.0
+pytest-asyncio>=0.23.0
 pytest-dependency==0.5.1
 openai
 langgraph

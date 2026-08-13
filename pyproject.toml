@@ -9,3 +9,8 @@ description = "My amazing project"
 [tool.setuptools]
 packages = ["synthea"]
 # install_requires = ["some_dependency >= 1.0"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+addopts = "-q"
