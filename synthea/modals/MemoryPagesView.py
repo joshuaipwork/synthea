@@ -6,9 +6,9 @@ import discord
 from discord import ButtonStyle, ui
 
 MAX_PAGE_BUTTONS = 5
-DEFAULT_PAGE_SIZE = 10
 MAX_MEMORY_CHARS = 150
 MAX_MESSAGE_CHARS = 1900
+DEFAULT_PAGE_SIZE = 10
 
 
 class MemoryPagesView(ui.View):
