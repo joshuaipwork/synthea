@@ -178,6 +178,20 @@ class ContextManager:
         
         return None
 
+    async def _model_supports_vision(self, message: discord.Message) -> bool:
+        """
+        Determines whether the model that will respond supports vision, based on
+        the model selected by the most recent command in the reply chain (falling
+        back to the configured default model).
+        """
+        config = Config()
+        args: ParsedArgs | None = await self.get_args_from_chat_history(message)
+        model_name: str = (args.model if args and args.model else config.default_model_name).lower()
+        model_definition: ModelDefinition | None = config.models.get(model_name)
+        # if the model isn't listed in the config, assume it supports vision to
+        # avoid breaking models we don't have metadata for
+        return model_definition.vision if model_definition else True
+
     async def compile_chat_history(
         self,
         message: discord.Message,
@@ -219,13 +233,18 @@ class ContextManager:
         chat_history.messages = []
 
         history_token_limit: int = config.context_length - config.max_new_tokens
-        
+
+        # determine whether the model that will respond supports vision, so that
+        # image attachments aren't sent to models without vision capability
+        vision: bool = await self._model_supports_vision(message)
+
         is_last_message: bool = True
         async for message in history_iterator:
             raw_content, added_tokens = await self._get_content(
-                message, history_token_limit - token_count, read_attachments=True
+                message, history_token_limit - token_count, read_attachments=True,
+                vision=vision,
             )
-            text: str = self._extract_text_from_content(raw_content)
+            text: str = self._extract_text_from_content(raw_content, exclude_attachments=True)
 
             # if the message is a command, parse it
             if text.lower().startswith(config.command_start_str.lower()):
@@ -271,11 +290,15 @@ class ContextManager:
             content = []
             if text:
                 content.append({"type": "text", "text": text})
-            
+
             for entry in raw_content:
-                if entry.get("type") == "text":
-                    continue
-                content.append({"type": entry.get("type"), entry.get("type"): entry.get(entry.get("type"))})
+                entry_type = entry.get("type")
+                # Include non-text entries (images, etc.) and text attachment entries
+                if entry_type != "text":
+                    content.append({"type": entry_type, entry_type: entry.get(entry_type)})
+                elif entry.get("text", "").startswith("\n\n[File"):
+                    # text attachment content -- user prefix is already baked in above
+                    content.append(entry)
 
             if message.author.id == self.bot_user_id:
                 chat_history.messages.insert(0, AIMessage(content=content, name=str(user_id)))
@@ -301,7 +324,6 @@ class ContextManager:
         """
         openai_content_type = ""
         attachment_string = ""
-        attachment_bytes = await attachment.read()
 
         content_type = (attachment.content_type or "").split(";")[0].strip().lower()
         ext = os.path.splitext(attachment.filename)[1].lower()
@@ -310,6 +332,12 @@ class ContextManager:
         if attachment.size > MAX_ATTACHMENT_BYTES:
             inference_logger.info(f"Skipping [{attachment.filename}]: too large ({attachment.size} bytes).")
             return None
+
+        is_text = (
+            content_type.startswith("text/")
+            or not content_type
+            or ext in TEXT_EXTENSIONS
+        )
 
         if "application/pdf" in content_type:
             inference_logger.info("Saving the pdf attachment")
@@ -320,25 +348,15 @@ class ContextManager:
                 await attachment.save(temp_path)
                 attachment_string = await _extract_pdf_text(temp_path)
         elif content_type.startswith("image/"):
-            # if not model_definition.vision:
-            #     inference_logger.info("Skipped processing attached image since the model cannot process images.")
-            #     return None
             inference_logger.info("Found image attachment")
-            # just incldue the image url
             openai_content_type = "image_url"
             attachment_string = attachment.url
-        elif (
-            content_type.startswith("text/")
-            or not content_type
-            or ext in TEXT_EXTENSIONS
-            or _looks_like_text(attachment_bytes)
-        ):
-            if (attachment.filename != ContextManager.REASONING_TXT_FILE_NAME):
-                openai_content_type = "text"
-                attachment_string = attachment_bytes.decode("utf-8", errors="replace")
-            else:
+        elif is_text or _looks_like_text(await attachment.read()):
+            if attachment.filename == ContextManager.REASONING_TXT_FILE_NAME:
                 inference_logger.info("Skipping txt file because it contains bot reasoning.")
                 return None
+            openai_content_type = "text"
+            attachment_string = (await attachment.read()).decode("utf-8", errors="replace")
 
         inference_logger.info(f"Obtained the text from the [{attachment.content_type}] attachment as a string")
         inference_logger.info(f"Recorded as ({openai_content_type}, {attachment_string[:200]!r})")
@@ -349,7 +367,7 @@ class ContextManager:
         Gets 
         """
 
-    async def _get_content(self, message: discord.Message, remaining_tokens: int, read_attachments: bool=False) -> tuple[list[dict[str, str]], int]:
+    async def _get_content(self, message: discord.Message, remaining_tokens: int, read_attachments: bool=False, vision: bool=True) -> tuple[list[dict[str, str]], int]:
         """
         Gets the text and attachments from a message and counts the tokens.
         """
@@ -377,25 +395,29 @@ class ContextManager:
                     # dont attach reasoning so the bot doesn't get clogged by its own thoughts
                     continue
                 elif not attachment_content or attachment_content.isspace():
-                    content = {"type": "text", "text": "\n\nSYSTEM: A file was attached to this message, but it is either empty or is not a file type you can read."}
+                    content = {"type": "text", "text": f"\n\n[A file was attached but it is empty or unreadable]"}
                     tokens += len(content["text"]) // self.EST_CHARS_PER_TOKEN
-                elif openai_content_type == "image_url":
+                elif openai_content_type == "image_url" and vision:
                     content = {"type": "image_url", "image_url": {"url": self.image_to_base64(attachment_content)}}
                     # TODO: calculate the number of tokens associated with image
+                elif openai_content_type == "image_url":
+                    # the model doesn't support vision, so don't send the image to it
+                    content = {"type": "text", "text": f"\n\n[Image attachment: {attachment.filename} (not shown because the model does not support vision)]"}
+                    tokens += len(content["text"]) // self.EST_CHARS_PER_TOKEN
                 elif remaining_tokens is not None and (len(attachment_content) // self.EST_CHARS_PER_TOKEN) > remaining_tokens:
-                    content = {"type": "text", "text": "\n\nSYSTEM: A file was attached to this message, but it was too large to be read."}
+                    content = {"type": "text", "text": f"\n\n[File too large to include: {attachment.filename}]"}
                     tokens += len(content["text"]) // self.EST_CHARS_PER_TOKEN
                 else:
-                    content = {"type": "text", "text": f"\n\nSYSTEM: A file called {attachment.filename} was attached to this message. Here are the contents:\n {attachment_content}"}
+                    content = {"type": "text", "text": f"\n\n[File attachment: {attachment.filename}]\n{attachment_content}"}
                     tokens += len(content["text"]) // self.EST_CHARS_PER_TOKEN
                 contents.append(content)
 
         return contents, tokens
     
-    def _extract_text_from_content(self, content: list[dict[str, str]]) -> str:
+    def _extract_text_from_content(self, content: list[dict[str, str]], exclude_attachments: bool = False) -> str:
         text = ""
         for entry in content:
-            if entry["type"] == "text":
+            if entry["type"] == "text" and not (exclude_attachments and entry["text"].startswith("\n\n[File")):
                 text += entry["text"]
         return text
 
