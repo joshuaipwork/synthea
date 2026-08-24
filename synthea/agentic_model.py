@@ -211,15 +211,27 @@ class AgenticModel(Model):
         model_name: str = synthea_config.default_model_name
         if args and args.model:
             model_name = args.model
+        model_name = model_name.lower()
+
+        # resolve the reasoning effort: command arg takes precedence, then the
+        # model's configured default
+        reasoning_effort: str = (
+            args.reasoning_effort
+            if args and args.reasoning_effort
+            else synthea_config.models[model_name].reasoning_effort
+        )
 
         self.llm = ChatOpenAI(
             model=model_name,
             api_key=synthea_config.api_key,
             base_url=synthea_config.api_base_url,
             streaming=True,
+            reasoning_effort=reasoning_effort,
         ).bind_tools(self.tools)
 
-        inference_logger.info(f"Generating with model {model_name}")
+        inference_logger.info(
+            f"Generating with model {model_name} (reasoning_effort={reasoning_effort})",
+        )
         now = datetime.now(tz=zoneinfo.ZoneInfo("America/Los_Angeles"))
         current_time = now.isoformat(timespec="seconds")
         day_of_week = now.strftime("%A")

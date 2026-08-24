@@ -70,6 +70,9 @@ class CommandParser(argparse.ArgumentParser):
                                             for the remainder of the reply chain.
                     -m MODEL, -model MODEL, --model MODEL
                                             The language model to use.
+                    -re EFFORT, -reasoning-effort EFFORT, --reasoning-effort EFFORT
+                                            How much effort the model should spend reasoning.
+                                            One of: low, medium, high.
                     ```""")
         return parsed_args
 
@@ -97,6 +100,7 @@ class ParsedArgs:
     use_image_model: bool = False
     prompt: str = None
     model: str = None
+    reasoning_effort: str = None
     dimensions: str = None
     image_width: str = None
     image_height: str = None
@@ -158,6 +162,16 @@ class ChatbotParser:
             default=None,
             dest="model",
             help="Which model to use.",
+        )
+        self.parser.add_argument(
+            "-re",
+            "-reasoning-effort",
+            "--reasoning-effort",
+            action="store",
+            choices=["low", "medium", "high"],
+            default=None,
+            dest="reasoning_effort",
+            help="How much effort the model should spend reasoning. One of: low, medium, high.",
         )
         self.parser.add_argument(
             "-d",

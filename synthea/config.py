@@ -54,6 +54,7 @@ class Config:
                 description=model_props.get("description", ""),
                 vision=model_props.get("vision", False),
                 reasoning=model_props.get("reasoning", False),
+                reasoning_effort=model_props.get("reasoning_effort", "medium"),
             )
 
         # tool APIs

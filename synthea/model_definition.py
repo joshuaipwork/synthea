@@ -9,3 +9,4 @@ class ModelDefinition:
     description: str
     vision: bool
     reasoning: bool
+    reasoning_effort: str = "medium"
