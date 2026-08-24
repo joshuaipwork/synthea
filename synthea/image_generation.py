@@ -6,6 +6,7 @@ import uuid
 import requests
 
 from synthea.config import Config
+from synthea.image_metadata import embed_prompt_in_image
 
 config = Config()
 client_id = str(uuid.uuid4())
@@ -108,4 +109,15 @@ class ImageModel:
             )
             images = await self._get_images_from_workflow(workflow)
             print(f"Received {len(images)} images")
+
+            # embed the generation prompt into each image's metadata so the
+            # bot can read it back later (e.g. to tell a non-vision model what
+            # it generated when refining the image)
+            for node_id, image_list in images.items():
+                images[node_id] = [
+                    embed_prompt_in_image(
+                        image_data, positive_prompt, negative_prompt,
+                    )
+                    for image_data in image_list
+                ]
             return images

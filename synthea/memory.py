@@ -45,7 +45,7 @@ async def retrieve_relevant_memories(
 ) -> str:
     """From a list of messages, retrieves a list of relevant memories about the last user from mem0
     """
-    memory = await AsyncMemory.from_config(create_config(model_name))
+    memory = AsyncMemory.from_config(create_config(model_name))
     user_turns: list[HumanMessage] = [
         msg for msg in messages if isinstance(msg, HumanMessage)
     ]
@@ -57,7 +57,7 @@ async def retrieve_relevant_memories(
 
     # retrieve the memories from the last user
     relevant_memories = await memory.search(
-        query=user_content, user_id=user_id, limit=5,
+        query=user_content, filters={"user_id": user_id}, top_k=5,
     )
 
     memory_context = "\n".join(
@@ -71,7 +71,7 @@ async def add_memories(messages: list[BaseMessage], model_name: str) -> str:
     """From a list of messages, save information to a list of memories about the last user
     from their own messages.
     """
-    memory = await AsyncMemory.from_config(create_config(model_name))
+    memory = AsyncMemory.from_config(create_config(model_name))
 
     # filter the messages down to only human messages to avoid stuffing the context
     user_turns = [msg for msg in messages if isinstance(msg, HumanMessage)]
@@ -111,14 +111,14 @@ def extract_text(content) -> str:
 
 
 async def get_user_memories(user_id) -> list[dict[str, Any]]:
-    memory = await AsyncMemory.from_config(create_config(bot_config.default_model_name))
+    memory = AsyncMemory.from_config(create_config(bot_config.default_model_name))
 
-    result = await memory.get_all(user_id=user_id)
+    result = await memory.get_all(filters={"user_id": user_id})
     return result.get("results", [])
 
 
 async def clear_user_memory(user_id: str, persona=None):
-    memory = await AsyncMemory.from_config(create_config(bot_config.default_model_name))
+    memory = AsyncMemory.from_config(create_config(bot_config.default_model_name))
 
     if persona:
         await memory.delete_all(user_id=user_id, agent_id=persona)
@@ -129,7 +129,7 @@ async def clear_user_memory(user_id: str, persona=None):
 async def add_user_memory(
     new_memory: str, user_id: str, persona=None,
 ) -> dict[str, Any]:
-    memory = await AsyncMemory.from_config(create_config(bot_config.default_model_name))
+    memory = AsyncMemory.from_config(create_config(bot_config.default_model_name))
 
     if persona:
         return await memory.add(new_memory, user_id=user_id, agent_id=persona)
@@ -137,13 +137,13 @@ async def add_user_memory(
 
 
 async def delete_memory(memory_id: str):
-    memory = await AsyncMemory.from_config(create_config(bot_config.default_model_name))
+    memory = AsyncMemory.from_config(create_config(bot_config.default_model_name))
 
     await memory.delete(memory_id)
 
 
 async def get_memory(memory_id: str) -> dict[str, Any] | None:
-    memory = await AsyncMemory.from_config(create_config(bot_config.default_model_name))
+    memory = AsyncMemory.from_config(create_config(bot_config.default_model_name))
 
     try:
         return await memory.get(memory_id)

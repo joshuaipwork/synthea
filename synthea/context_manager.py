@@ -22,6 +22,7 @@ from synthea.character_database import CharactersDatabase
 from synthea.commands import ChatbotParser, ParsedArgs
 from synthea.config import Config
 from synthea.constants import SYSTEM_TAG
+from synthea.image_metadata import extract_prompt_from_image
 from synthea.model_definition import ModelDefinition
 from synthea.utilities import inference_logger
 
@@ -483,12 +484,26 @@ class ContextManager:
                     }
                     # TODO: calculate the number of tokens associated with image
                 elif openai_content_type == "image_url":
-                    # the model doesn't support vision, so don't send the image to it
-                    content = {
-                        "type": "text",
-                        "text": f"\n\n[Image attachment: {attachment.filename} (not shown because the model does not support vision)]",
-                    }
-                    tokens += len(content["text"]) // self.EST_CHARS_PER_TOKEN
+                    # the model doesn't support vision, so don't send the image to it.
+                    # if the image carries embedded generation metadata (e.g. one
+                    # this bot generated), surface the prompt so the model still
+                    # knows what the image depicts and can refine it.
+                    placeholder = f"\n\n[Image attachment: {attachment.filename} (not shown because the model does not support vision)"
+                    try:
+                        image_data = await attachment.read()
+                        embedded_prompt = await asyncio.to_thread(
+                            extract_prompt_from_image, image_data,
+                        )
+                    except Exception as e:
+                        inference_logger.warning(
+                            f"Could not read image metadata for {attachment.filename}: {e}"
+                        )
+                        embedded_prompt = None
+                    if embedded_prompt:
+                        placeholder += f". It was generated with the prompt: \"{embedded_prompt}\""
+                    placeholder += "]"
+                    content = {"type": "text", "text": placeholder}
+                    tokens += len(placeholder) // self.EST_CHARS_PER_TOKEN
                 elif (
                     remaining_tokens is not None
                     and (len(attachment_content) // self.EST_CHARS_PER_TOKEN)
