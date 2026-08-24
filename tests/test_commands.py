@@ -121,6 +121,20 @@ class TestChatbotParser:
         with pytest.raises(argparse.ArgumentError):
             parser.parse("!syn -d not_dimensions a dog")
 
+    def test_reasoning_effort_flag(self, parser):
+        args = parser.parse("!syn -re high think hard")
+        assert args.reasoning_effort == "high"
+        assert args.prompt == "think hard"
+
+    def test_reasoning_effort_absent_is_none(self, parser):
+        args = parser.parse("!syn hi")
+        assert args.reasoning_effort is None
+
+    @pytest.mark.parametrize("bad", ["extreme", "HIGH", "0"])
+    def test_invalid_reasoning_effort_raises(self, parser, bad):
+        with pytest.raises(argparse.ArgumentError):
+            parser.parse(f"!syn -re {bad} hi")
+
     def test_help_raises_parser_exited(self, parser):
         with pytest.raises(ParserExitedException):
             parser.parse("!syn -h")
@@ -130,3 +144,12 @@ class TestChatbotParser:
         assert args.use_as_system_prompt is False
         assert args.use_image_model is False
         assert args.help is False
+
+
+class TestModelDefinitionConfig:
+    def test_reasoning_effort_defaults_to_medium(self, config):
+        # glm46v does not specify a reasoning_effort, so it should default
+        assert config.models["glm46v"].reasoning_effort == "medium"
+
+    def test_reasoning_effort_from_config(self, config):
+        assert config.models["deepseek"].reasoning_effort == "high"
