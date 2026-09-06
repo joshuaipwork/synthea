@@ -47,7 +47,7 @@ class AgenticModel(Model):
 
     def __init__(self):
         synthea_config: Config = Config()
-        self.synthea_config = synthea_config
+        self.synthea_config: Config = synthea_config
 
         os.environ["LANGFUSE_PUBLIC_KEY"] = synthea_config.langfuse_public_key
         os.environ["LANGFUSE_SECRET_KEY"] = synthea_config.langfuse_secret_key
@@ -136,10 +136,10 @@ class AgenticModel(Model):
             return {"messages": [response]}
         # by default, inject boilerplate into the prompt
         opener_string = ""
-        if self.opening_phrase_tracker.recent_openers:
-            opener_string = "Do not start your response with any of these recently used phrases: \n"
-            for opener in self.opening_phrase_tracker.recent_openers:
-                opener_string += f'"{opener}..." \n'
+        # if self.opening_phrase_tracker.recent_openers:
+        #     opener_string = "Do not start your response with any of these recently used phrases: \n"
+        #     for opener in self.opening_phrase_tracker.recent_openers:
+        #         opener_string += f'"{opener}..." \n'
 
         system = SystemMessage(
             content=f"""{state["system_prompt"]} \n \

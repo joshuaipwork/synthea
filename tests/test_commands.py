@@ -34,6 +34,60 @@ class TestCommandParser:
         assert captured.out == ""
 
 
+class TestHelpPages:
+    def test_general_help_pages_have_usage_and_all_flags(self, parser):
+        pages = parser.parser.help_pages()
+        assert len(pages) >= 2
+        assert "Usage" in pages[0]
+        assert "!syn" in pages[0]
+        assert "prompt" in pages[0]
+        joined = "\n".join(pages)
+        assert "--character" in joined
+        assert "--use-image-model" in joined
+        assert "--use-as-system-prompt" in joined
+        assert "--model" in joined
+        assert "--reasoning-effort" in joined
+        assert "--dimensions" in joined
+
+    def test_image_help_pages_only_show_image_options(self, parser):
+        pages = parser.parser.image_help_pages()
+        assert "-im" in pages[0]
+        joined = "\n".join(pages)
+        assert "--dimensions" in joined
+        assert "--character" not in joined
+        assert "--model" not in joined
+        assert "The prompt to use with the image model." in joined
+
+    def test_help_pages_respect_length_limit(self, parser):
+        for pages in (parser.parser.help_pages(), parser.parser.image_help_pages()):
+            for page in pages[1:]:  # skip the intro page, which is always its own page
+                assert len(page) <= CommandParser.MAX_HELP_PAGE_CHARS
+
+    def test_argument_entries_split_across_pages(self, parser, monkeypatch):
+        assert len(parser.parser.help_pages()) == 2  # intro + one arguments page
+        monkeypatch.setattr(CommandParser, "MAX_HELP_PAGE_CHARS", 150)
+        assert len(parser.parser.help_pages()) > 2
+
+    def test_help_flag_raises_with_pages_and_title(self, parser):
+        with pytest.raises(ParserExitedException) as excinfo:
+            parser.parse("!syn -h")
+        err = excinfo.value
+        assert len(err.pages) >= 2
+        assert "Help" in err.title
+
+    def test_image_help_flag_raises_with_image_pages(self, parser):
+        with pytest.raises(ParserExitedException) as excinfo:
+            parser.parse("!syn -im -h")
+        err = excinfo.value
+        assert "-im" in err.pages[0]
+        assert "--character" not in "\n".join(err.pages)
+
+    def test_exit_raises_with_pages(self, command_parser):
+        with pytest.raises(ParserExitedException) as excinfo:
+            command_parser.exit(status=0, message="done")
+        assert isinstance(excinfo.value.pages, list)
+
+
 class TestImageDimensions:
     def test_valid_dimensions(self, parser):
         assert parser.image_dimensions("1024x1024") == "1024x1024"

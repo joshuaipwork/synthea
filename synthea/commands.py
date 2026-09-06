@@ -16,11 +16,16 @@ class CommandError(ValueError):
 
 class ParserExitedException(Exception):
     """Indicates that argparse would have exited if this were a command line command
-    rather than a discord bot command
+    rather than a discord bot command.
+
+    Carries the help message the bot should show to the user, split into
+    pages for the paginated help view.
     """
 
-    def __init__(self, msg: str):
-        self.message = msg
+    def __init__(self, pages: list[str], title: str = "📖 Help"):
+        self.pages: list[str] = pages
+        self.title: str = title
+        super().__init__("Command parser exited with help output.")
 
 
 class CommandParser(argparse.ArgumentParser):
@@ -28,52 +33,21 @@ class CommandParser(argparse.ArgumentParser):
     bot commands.
     """
 
+    # keeps each help page comfortably below discord's 2000 character message limit
+    MAX_HELP_PAGE_CHARS: int = 1800
+
     def parse_args(self, args=None, namespace=None):
         parsed_args: ParsedArgs = super().parse_args(args, namespace)
         if parsed_args.help:
             # We want to show different help based on whether other flags are present
             if parsed_args.use_image_model:  # If -im was provided (even without a value, it might be set to the default or True)
-                raise ParserExitedException("""
-                    ```usage: !syn -im [-h] [-dim "[width]x[height]"] prompt
-
-                    This bot is an interface for using AI models. 
-                    When used with the -im option, it generates an image instead of
-                    sending a prompt to a language model
-
-                    positional arguments:
-                    prompt                The prompt to use with the image model.
-
-                    options:
-                    -h, --help            show this help message and exit
-                    -d, -dim, --dimensions 
-                                            Create an image with these dimensions.
-                                            Use the form [width]x[height],
-                                            for example 1024x1024.
-                    ```""")
-            raise ParserExitedException("""
-                    ```usage: !syn [-h] [-c CHARACTER] [-im] [-sp] [-d] [-m MODEL] prompt
-
-                    This bot is an interface for using AI models. 
-
-                    positional arguments:
-                    prompt                The prompt to give the bot.
-
-                    options:
-                    -h, --help            show this help message and exit
-                    -c CHARACTER, -char CHARACTER, --character CHARACTER
-                                            The character for the bot to assume in its response.
-                    -im, --use-image-model
-                                            Generates an image instead of contacting the LLM.
-                                            For more information, use -im -h to get image-specific options.
-                    -sp, -system-prompt, --use-as-system-prompt
-                                            Save the prompt text as the system prompt
-                                            for the remainder of the reply chain.
-                    -m MODEL, -model MODEL, --model MODEL
-                                            The language model to use.
-                    -re EFFORT, -reasoning-effort EFFORT, --reasoning-effort EFFORT
-                                            How much effort the model should spend reasoning.
-                                            One of: low, medium, high.
-                    ```""")
+                raise ParserExitedException(
+                    self.image_help_pages(),
+                    title=f"🖼️ {config.bot_name} Image Generation Help",
+                )
+            raise ParserExitedException(
+                self.help_pages(), title=f"📖 {config.bot_name} Help",
+            )
         return parsed_args
 
     def error(self, message):
@@ -86,10 +60,135 @@ class CommandParser(argparse.ArgumentParser):
         """Some actions, like asking for help or encountering an error, will exit the program after running
         This makes it so that it raises an exception instead so the bot can return that to the user.
         """
-        raise ParserExitedException(f"```{self.format_help()}```")
+        raise ParserExitedException(
+            self.help_pages(), title=f"📖 {config.bot_name} Help",
+        )
 
     def print_help(self, file: IO[str] | None = None) -> None:
         """Overriden to prevent console spam"""
+
+    def help_pages(self) -> list[str]:
+        """Formats the general help message as a list of pages for the
+        paginated help view.
+        """
+        intro = self._intro_page(self._build_usage())
+        return self._assemble_pages(intro, self._argument_entries())
+
+    def image_help_pages(self) -> list[str]:
+        """Formats the image-generation-specific help message as a list of
+        pages for the paginated help view.
+        """
+        intro = self._intro_page(
+            self._build_usage(
+                include_dests={"help", "dimensions"}, fixed_flags=("-im",),
+            ),
+            description="When used with the -im option, this bot generates an image instead of sending a prompt to a language model.",
+        )
+        return self._assemble_pages(
+            intro,
+            self._argument_entries(
+                include_dests={"help", "dimensions"},
+                prompt_help="The prompt to use with the image model.",
+            ),
+        )
+
+    def _intro_page(self, usage: str, description: str | None = None) -> str:
+        """Builds the first help page, containing the usage line and a
+        short description of the bot.
+        """
+        lines = ["**Usage**", f"`{usage}`"]
+        text = description if description is not None else self.description
+        if text:
+            lines.append(text)
+        return "\n\n".join(lines)
+
+    def _build_usage(
+        self,
+        include_dests: set[str] | None = None,
+        fixed_flags: tuple[str, ...] = (),
+    ) -> str:
+        """Builds the usage line, e.g. `!syn [-h] [-c CHARACTER] prompt`.
+
+        Optional actions can be restricted to `include_dests`; positional
+        arguments are always shown. `fixed_flags` are flags that are always
+        present (like `-im` in the image generation usage line).
+        """
+        parts = [self.prog, *fixed_flags]
+        for action in self._actions:
+            if action.help is argparse.SUPPRESS:
+                continue
+            if action.option_strings:
+                if include_dests is not None and action.dest not in include_dests:
+                    continue
+                parts.append(f"[{self._format_usage_flag(action)}]")
+            elif action.nargs == argparse.REMAINDER:
+                parts.append(action.dest)
+            else:
+                parts.append(f"<{action.dest}>")
+        return " ".join(parts)
+
+    @staticmethod
+    def _format_usage_flag(action: argparse.Action) -> str:
+        """Formats a single option for the usage line, e.g. `-c CHARACTER`.
+        """
+        option = action.option_strings[0]
+        if action.nargs == 0:
+            return option
+        if action.choices:
+            return f"{option} {{{'|'.join(action.choices)}}}"
+        return f"{option} {action.dest.upper()}"
+
+    def _argument_entries(
+        self,
+        include_dests: set[str] | None = None,
+        prompt_help: str | None = None,
+    ) -> list[str]:
+        """Formats each documented argument as a markdown entry, with
+        positional arguments first. `include_dests` (if given) restricts
+        which optional actions are shown.
+        """
+        entries: list[str] = []
+        positionals = [a for a in self._actions if not a.option_strings]
+        options = [a for a in self._actions if a.option_strings]
+        for action in positionals + options:
+            if action.help is argparse.SUPPRESS:
+                continue
+            if action.option_strings:
+                if include_dests is not None and action.dest not in include_dests:
+                    continue
+                entries.append(f"**`{self._format_flags(action)}`**\n> {action.help}")
+            else:
+                entries.append(f"**`{action.dest}`**\n> {prompt_help or action.help or ''}")
+        return entries
+
+    @staticmethod
+    def _format_flags(action: argparse.Action) -> str:
+        """Formats all of an option's flags, e.g. `-c CHARACTER, -char CHARACTER, --character CHARACTER`.
+        """
+        if action.nargs == 0:
+            return ", ".join(action.option_strings)
+        metavar = action.dest.upper()
+        return ", ".join(f"{opt} {metavar}" for opt in action.option_strings)
+
+    def _assemble_pages(self, intro: str, entries: list[str]) -> list[str]:
+        """Splits the argument entries across pages so that no page exceeds
+        discord's message length limit.
+        """
+        pages: list[str] = [intro]
+        current: list[str] = []
+        current_len = 0
+        separator = "\n\n"
+        for entry in entries:
+            added_len = len(entry) + (len(separator) if current else 0)
+            if current and current_len + added_len > self.MAX_HELP_PAGE_CHARS:
+                pages.append(separator.join(current))
+                current, current_len = [entry], len(entry)
+            else:
+                current.append(entry)
+                current_len += added_len
+        if current:
+            pages.append(separator.join(current))
+        return pages
 
 
 @dataclass
@@ -127,7 +226,7 @@ class ChatbotParser:
             add_help=False,
         )
         self.parser.add_argument(
-            "-h", "--help", action="store_true", help="Show help message",
+            "-h", "--help", action="store_true", help="Show this help message.",
         )
         self.parser.add_argument(
             "-c",
@@ -143,7 +242,7 @@ class ChatbotParser:
             action="store_true",
             default=None,
             dest="use_image_model",
-            help="Generates an image instead of contacting the LLM.",
+            help="Generates an image instead of contacting the LLM. For more information, use -im -h to get image-specific options.",
         )
         self.parser.add_argument(
             "-sp",

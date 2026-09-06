@@ -18,13 +18,14 @@ from synthea.character_errors import (
     CharacterNotFoundError,
     CharacterNotOnServerError,
 )
-from synthea.commands import ParsedArgs
+from synthea.commands import ParsedArgs, ParserExitedException
 from synthea.config import Config
 from synthea.constants import SYSTEM_TAG
 from synthea.context_manager import ChatHistory, ContextManager, DiscordMetadata
 from synthea.dtos import GenerationResponse
 from synthea.image_generation import ImageModel
 from synthea.model import Model
+from synthea.modals.help_view import HelpView
 
 CHAR_LIMIT: int = 2000  # discord's character limit
 DISCORD_EMBED_LIMIT: int = 4000  # discord's character limit
@@ -197,6 +198,10 @@ class SyntheaClient(discord.Client):
             async with asyncio.timeout(7200):
                 await self.respond_to_user(message)
             await message.add_reaction("✅")
+
+        # if the user asked for help, show it as a paginated ephemeral message
+        except ParserExitedException as err:
+            await HelpView.send(message, err.pages, err.title)
 
         # if error, let the user know what went wrong
         # pylint: disable-next=broad-exception-caught
