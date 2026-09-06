@@ -1,0 +1,98 @@
+# Synthea configuration
+# Copy this file to `config.yaml` and fill in your own values.
+#
+# Required keys have no default and MUST be present; optional keys fall back to
+# the default shown in the comment.
+#
+# WARNING: `config.yaml` is git-ignored. Do not commit real secrets. Use
+# placeholders (or environment-provided values) for anything sensitive.
+
+### main model API parameters
+# The API key used to call the language model.
+api_key: "sk-your-api-key-here"
+# An OpenAI-compatible endpoint base URL.
+api_base_url: "https://llm.example.com/v1"
+
+### memory (mem0) and RAG
+# Whether to persist user memories via mem0.
+enable_memory: false
+# Whether to enable retrieval-augmented generation lookup.
+enable_rag_lookup: false
+# The OpenAI-compatible endpoint used for embeddings.
+# Optional - defaults to `api_base_url`.
+embeddings_base_url: "https://embeddings.example.com/v1"
+# The embedding model to use.
+# Optional - defaults to "text-embedding-3-small".
+embeddings_model: "text-embedding-3-small"
+
+### langfuse observability (all three must be set to enable)
+# Leave empty to disable langfuse tracing.
+langfuse_url: ""
+langfuse_public_key: ""
+langfuse_secret_key: ""
+
+### text generation model
+# The model used by default when the user does not specify one with `-m`.
+default_model_name: "your-model"
+# The list of models the bot makes available to users.
+# Each entry is a mapping of
+# `model_name: {description, vision, reasoning, reasoning_effort}`.
+models:
+  - your-model:
+      description: "A short description of the model."
+      vision: false    # whether the model accepts image input
+      reasoning: true  # whether the model has a separate reasoning mode
+      reasoning_effort: "medium"  # default reasoning effort (low | medium | high)
+
+### parameters for text generation
+# The maximum number of context tokens the model accepts.
+context_length: 262144
+# The maximum number of tokens the model may generate in a single reply.
+max_new_tokens: 12000
+
+### default prompt parameters
+# The persona/system prompt the bot uses when no character is selected.
+system_prompt: |
+    You are an AI assistant. Be helpful and concise.
+
+### discord bot parameters
+# The discord bot token.
+client_token: "your-discord-token"
+# A message must start with this string for the bot to respond.
+command_start_str: "!syn "
+# The bot's name.
+bot_name: "Synthea"
+# The bot's "now playing" activity text on discord.
+activity: "Type !syn [PROMPT] to talk to me!"
+
+### Tavily web search
+tavily_api_key: "tvly-your-tavily-key"
+
+### image generation (ComfyUI)
+# Whether image generation is enabled.
+image_generation_enabled: false
+# The ComfyUI server base URL.
+image_generation_api_base_url: "https://comfy.example.com"
+# The maximum pixel count allowed for generated images.
+image_maximum_pixels: 3686400 # ~1440p
+# Default image dimensions when the user does not provide them with `-d`.
+image_default_width: 1024
+image_default_height: 1024
+# Optional headers sent with every image-generation API request (e.g. a Cloudflare
+# access token). Omit entirely if none are needed.
+image_generation_api_headers:
+  CF-Access-Client-Id: "client-id"
+  CF-Access-Client-Secret: "client-secret"
+
+# Path to the ComfyUI workflow JSON used to generate images.
+comfyui_workflow_path: "./comfyui_workflows/krea.json"
+# The ComfyUI node ids and input names used to inject the prompt, dimensions,
+# and seed into the workflow. These depend on the specific workflow file.
+comfyui_prompt_node_id: 67
+comfyui_prompt_input_name: "text"
+comfyui_height_node_id: 68
+comfyui_height_input_name: "height"
+comfyui_width_node_id: 68
+comfyui_width_input_name: "width"
+comfyui_seed_node_id: 70
+comfyui_seed_input_name: "seed"
