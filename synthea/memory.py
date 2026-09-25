@@ -207,11 +207,37 @@ def extract_text(content) -> str:
     return content
 
 
+# mem0's get_all() defaults to top_k=20 and truncates its answer to the first
+# top_k rows the vector store hands back, in insertion order (oldest first).
+# Left at the default, /view_memory could only ever show the 20 oldest memories
+# - exactly two pages - and everything stored later stayed invisible no matter
+# how far you paged. Ask for plenty (mem0 itself uses 10000 for its own
+# listings); get_user_memories also sorts newest-first, so if the cap is ever
+# reached it is the oldest entries that fall off rather than the newest.
+MAX_LISTED_MEMORIES: int = 1_000
+
+
+def _memory_recency(memory: dict[str, Any]) -> str:
+    """Sort key ordering memories most-recently-written first.
+
+    Timestamps are ISO strings (mem0's MemoryItem.created_at/updated_at);
+    records carrying neither sort last instead of breaking the listing.
+    """
+    return str(memory.get("updated_at") or memory.get("created_at") or "")
+
+
 async def get_user_memories(user_id) -> list[dict[str, Any]]:
+    """Every stored memory about ``user_id``, newest first.
+
+    The explicit top_k is load-bearing - see MAX_LISTED_MEMORIES.
+    """
     memory = _get_memory(bot_config.default_model_name)
 
-    result = await memory.get_all(filters={"user_id": user_id})
-    return result.get("results", [])
+    result = await memory.get_all(
+        filters={"user_id": user_id}, top_k=MAX_LISTED_MEMORIES,
+    )
+    memories: list[dict[str, Any]] = result.get("results", [])
+    return sorted(memories, key=_memory_recency, reverse=True)
 
 
 async def clear_user_memory(user_id: str, persona=None):
