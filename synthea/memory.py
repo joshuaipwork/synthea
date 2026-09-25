@@ -1,3 +1,4 @@
+import asyncio
 import os
 from typing import Any
 
@@ -5,6 +6,7 @@ from langchain_core.messages import BaseMessage, HumanMessage
 from mem0 import AsyncMemory
 
 from synthea.config import Config
+from synthea.utilities import inference_logger
 
 bot_config = Config()
 os.environ["OPENAI_API_KEY"] = bot_config.api_key
@@ -53,6 +55,86 @@ def _get_memory(model_name: str) -> AsyncMemory:
     if model_name not in _MEMORY_CLIENTS:
         _MEMORY_CLIENTS[model_name] = AsyncMemory.from_config(create_config(model_name))
     return _MEMORY_CLIENTS[model_name]
+
+
+# ---------------------------------------------------------------------------
+# background memory writes
+#
+# Memories are saved *after* the reply has been handed back to the user, so the
+# comparatively slow mem0 extraction/embedding/persistence work runs in
+# parallel with (rather than before) the response. The in-flight saves are
+# tracked here so callers that do need the writes to be complete (graceful
+# shutdown, tests) can wait for them.
+# ---------------------------------------------------------------------------
+
+# one lock per extraction model: mem0/chroma clients are shared per model, so
+# concurrent writes are serialized to keep them from interleaving
+_SAVE_LOCKS: dict[str, asyncio.Lock] = {}
+
+# every background save task that has been scheduled and not yet finished
+_PENDING_SAVES: set[asyncio.Task] = set()
+
+
+def _save_lock(model_name: str) -> asyncio.Lock:
+    """Returns the lock serializing background saves for the given model."""
+    if model_name not in _SAVE_LOCKS:
+        _SAVE_LOCKS[model_name] = asyncio.Lock()
+    return _SAVE_LOCKS[model_name]
+
+
+def _on_save_finished(task: asyncio.Task) -> None:
+    """Bookkeeping for a finished background save: forget it and log failures.
+
+    Nobody awaits a background save, so its exception has to be retrieved and
+    logged here, otherwise it would only surface as
+    "Task exception was never retrieved" at shutdown.
+    """
+    _PENDING_SAVES.discard(task)
+    if task.cancelled():
+        return
+    error = task.exception()
+    if error is not None:
+        inference_logger.error(
+            "Background memory save failed: %s", error, exc_info=error,
+        )
+
+
+async def _save_memories_in_background(
+    model_name: str, messages: list[BaseMessage],
+) -> None:
+    async with _save_lock(model_name):
+        await add_memories(messages=messages, model_name=model_name)
+
+
+def schedule_memory_save(
+    messages: list[BaseMessage], model_name: str,
+) -> asyncio.Task:
+    """Saves memories for ``messages`` in the background and returns immediately.
+
+    The reply to the user is never delayed by this call: the returned task is
+    already running but is not awaited. A copy of the message list is taken so
+    later state updates cannot mutate what the save sees. Failures are logged
+    by the done-callback instead of being raised, since nothing is waiting on
+    the result.
+    """
+    task = asyncio.create_task(
+        _save_memories_in_background(model_name, list(messages)),
+    )
+    _PENDING_SAVES.add(task)
+    task.add_done_callback(_on_save_finished)
+    return task
+
+
+async def wait_for_pending_memory_saves(timeout: float | None = None) -> bool:
+    """Waits for every scheduled background save to finish.
+
+    Returns True if all of them finished before ``timeout`` seconds elapsed.
+    """
+    pending = [task for task in _PENDING_SAVES if not task.done()]
+    if not pending:
+        return True
+    _, still_pending = await asyncio.wait(pending, timeout=timeout)
+    return not still_pending
 
 
 async def retrieve_relevant_memories(

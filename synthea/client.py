@@ -12,6 +12,7 @@ import discord
 import yaml
 from discord import app_commands
 
+from synthea import memory
 from synthea.agentic_model import AgenticModel
 from synthea.character_database import CharactersDatabase
 from synthea.character_errors import (
@@ -76,6 +77,27 @@ class SyntheaClient(discord.Client):
         self.image_model: ImageModel = ImageModel()
         self.config: Config = Config()
         self.char_db = CharactersDatabase()
+
+    async def close(self):
+        """Waits for any in-flight background memory saves before shutting down.
+
+        Memory writes normally happen in the background so they don't delay
+        replies, but they must still complete before the event loop goes away,
+        or the memories would be silently lost.
+        """
+        try:
+            drained = await memory.wait_for_pending_memory_saves(timeout=30)
+            if not drained:
+                CLIENT_LOGGER.warning(
+                    "Timed out draining background memory saves; some memories "
+                    "may not have been written",
+                )
+        except Exception:
+            CLIENT_LOGGER.error(
+                "Failed while draining background memory saves", exc_info=True,
+            )
+        finally:
+            await super().close()
 
     # async def setup_hook(self):
     #     """

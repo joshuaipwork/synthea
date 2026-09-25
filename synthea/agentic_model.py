@@ -111,21 +111,23 @@ class AgenticModel(Model):
             raise e
 
     async def memory_saver_node(self, state: AgentState):
-        """Saves memories related to a conversation to mem0
+        """Schedules mem0 memory extraction for this conversation to run in the
+        background.
+
+        The node returns without awaiting the save, so the graph finishes and
+        the response reaches the user while the memories are being written,
+        in parallel with it. Failures are logged by the background task rather
+        than raised, since a memory write should never fail a reply.
         """
         if state["args"].use_as_system_prompt:
             return None
         if self.synthea_config.enable_memory is False:
             return None
 
-        try:
-            await memory.add_memories(
-                messages=state["messages"], model_name=state["model"],
-            )
-            return {}
-        except Exception as e:
-            inference_logger.error("Full traceback: %s", exc_info=True)
-            raise e
+        memory.schedule_memory_save(
+            messages=list(state["messages"]), model_name=state["model"],
+        )
+        return {}
 
     async def supervisor_node(self, state: AgentState, config: RunnableConfig):
         # custom system prompts often want the bot to be something other than an assistant
