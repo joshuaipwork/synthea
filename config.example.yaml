@@ -18,6 +18,14 @@ api_base_url: "https://llm.example.com/v1"
 enable_memory: false
 # Whether to enable retrieval-augmented generation lookup.
 enable_rag_lookup: false
+# Whether to enable the `read_url` tool, which reads a linked page (or the full
+# text behind a search result) for the bot. Pages are fetched by Tavily
+# Extract, so reading a link makes no request from this machine; requires
+# `tavily_api_key`.
+enable_url_reader: true
+# How much text a single page may contribute, in characters. Longer pages are
+# truncated with a note. Optional - defaults to 20000.
+url_reader_max_chars: 20000
 # The OpenAI-compatible endpoint used for embeddings.
 # Optional - defaults to `api_base_url`.
 embeddings_base_url: "https://embeddings.example.com/v1"

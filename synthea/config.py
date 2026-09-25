@@ -1,5 +1,6 @@
 import yaml
 
+from synthea.constants import DEFAULT_URL_READER_MAX_CHARS
 from synthea.model_definition import ModelDefinition
 
 
@@ -33,6 +34,12 @@ class Config:
         # embeddings url
         self.enable_memory: bool = loaded_file.get("enable_memory", False)
         self.enable_rag_lookup: bool = loaded_file.get("enable_rag_lookup", False)
+
+        # url reading (the read_url tool)
+        self.enable_url_reader: bool = loaded_file.get("enable_url_reader", True)
+        self.url_reader_max_chars: int = loaded_file.get(
+            "url_reader_max_chars", DEFAULT_URL_READER_MAX_CHARS,
+        )
         self.embeddings_base_url: str = loaded_file.get(
             "embeddings_base_url", self.api_base_url,
         )

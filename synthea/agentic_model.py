@@ -26,6 +26,7 @@ from synthea.dtos import GenerationResponse
 from synthea.image_generation import ImageModel
 from synthea.model import Model
 from synthea.openers import OpeningPhraseTracker
+from synthea.url_reader import read_url
 from synthea.utilities import inference_logger
 
 
@@ -90,6 +91,8 @@ class AgenticModel(Model):
         )
 
         self.tools = [search_tool, generate_image]
+        if synthea_config.enable_url_reader:
+            self.tools.append(read_url)
         if self.synthea_config.enable_rag_lookup:
             self.tools.append(document_search)
 
