@@ -17,6 +17,7 @@ from langchain_core.tools import tool
 from langchain_tavily import TavilyExtract
 
 from synthea.config import Config
+from synthea.tool_report import reported_as
 from synthea.utilities import inference_logger
 
 ALLOWED_SCHEMES: set[str] = {"http", "https"}
@@ -120,6 +121,7 @@ async def read_url_content(url: str, query: str | None = None) -> str:
     return _truncate(content, max_chars)
 
 
+@reported_as(label="read page", show=("url", "query"))
 @tool
 async def read_url(url: str, query: str | None = None) -> str:
     """Reads the full text of one web page and returns it as plain text.

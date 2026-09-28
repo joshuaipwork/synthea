@@ -27,6 +27,7 @@ from synthea.dtos import GenerationResponse
 from synthea.image_generation import ImageModel
 from synthea.model import Model
 from synthea.modals.help_view import HelpView
+from synthea.tool_report import TOOL_USE_FIELD_NAME, format_tool_use
 
 CHAR_LIMIT: int = 2000  # discord's character limit
 DISCORD_EMBED_LIMIT: int = 4000  # discord's character limit
@@ -373,12 +374,18 @@ class SyntheaClient(discord.Client):
         """
         # create an embed to extend the character count
         embed = None
-        if response.final_output:
-            embed: discord.Embed = discord.Embed(
+        # one line per tool call, so the user can see what backed this reply
+        tool_use_report = format_tool_use(response.tools_used)
+        if response.final_output or tool_use_report is not None:
+            embed = discord.Embed(
                 description=response.final_output
                 if response.final_output.strip()
                 else "...",
             )
+            if tool_use_report is not None:
+                embed.add_field(
+                    name=TOOL_USE_FIELD_NAME, value=tool_use_report, inline=False,
+                )
         await self.send_response(
             embed=embed,
             message_to_reply=message,
@@ -432,6 +439,14 @@ class SyntheaClient(discord.Client):
 
         # add the id to the footer so the bot knows what char sent this
         embed.set_footer(text=char_data["id"])
+
+        # tell the user which tools backed this reply, one line each. the
+        # footer is taken by the character id, so this goes in a field instead
+        tool_use_report = format_tool_use(response.tools_used)
+        if tool_use_report is not None:
+            embed.add_field(
+                name=TOOL_USE_FIELD_NAME, value=tool_use_report, inline=False,
+            )
 
         # send the message with embed
         await self.send_response(
