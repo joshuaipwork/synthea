@@ -24,10 +24,6 @@ MAX_VALUE_CHARS: int = 100
 MAX_REPORT_CHARS: int = 1024  # discord's embed field value limit
 
 TOOL_USE_FIELD_NAME: str = "🔧 Tool use"
-NO_TOOLS_USED_TEXT: str = (
-    "None — answered from the model's own knowledge, not live search."
-)
-
 
 @dataclass(frozen=True)
 class ToolCall:
@@ -99,7 +95,7 @@ def format_tool_use(tools_used: list[ToolCall] | None) -> str | None:
     if tools_used is None:
         return None
     if not tools_used:
-        return NO_TOOLS_USED_TEXT
+        return None
 
     lines = [
         f"• {call.label}: {call.detail}" if call.detail else f"• {call.label}"
