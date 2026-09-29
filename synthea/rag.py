@@ -21,19 +21,31 @@ splitter = RecursiveCharacterTextSplitter(
 )
 
 
+def collection_name(guild_id: int, user_id: int) -> str:
+    """The document collection holding one server's (or DM user's) documents.
+
+    Suffixed with the embeddings scope, for the same reason the memories are:
+    chunks embedded by one service cannot be queried by another, and chromaDB
+    will not store mixed vector shapes in one collection. A provider change
+    therefore gets its own collection instead of a clash with the old one.
+    """
+    scope = Config().embeddings_scope
+    if guild_id:
+        return f"rag_docs_{guild_id}-{scope}"
+    return f"rag_docs_user_{user_id}-{scope}"
+
+
 def get_vectorstore(guild_id: int, user_id: int) -> Chroma:
     embeddings = OpenAIEmbeddings(
         base_url=Config().embeddings_base_url, model=Config().embeddings_model,
     )
 
-    collection_name: str = f"rag_docs_{guild_id}"
     persist_directory: str = "./chroma_db/rag"
     if not guild_id:
-        collection_name = f"rag_docs_user_{user_id}"
         persist_directory = "./chroma_db/rag/users/"
 
     return Chroma(
-        collection_name=collection_name,
+        collection_name=collection_name(guild_id, user_id),
         embedding_function=embeddings,
         persist_directory=persist_directory,
     )

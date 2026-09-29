@@ -33,7 +33,10 @@ def create_config(llm_model: str):
         "vector_store": {
             "provider": "chroma",
             "config": {
-                "collection_name": f"chatbot_memories-{bot_config.embeddings_model}",
+                # keyed on the embeddings scope: switching provider (or model)
+                # opens a new collection rather than colliding with memories
+                # already stored in the old provider's vector shape
+                "collection_name": f"chatbot_memories-{bot_config.embeddings_scope}",
                 "path": "./chroma_db/memories",  # just a local folder
             },
         },

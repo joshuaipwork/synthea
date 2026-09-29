@@ -1,7 +1,18 @@
+import hashlib
+import re
+
 import yaml
 
 from synthea.constants import DEFAULT_URL_READER_MAX_CHARS
 from synthea.model_definition import ModelDefinition
+
+
+def _slug(text: str, max_length: int) -> str:
+    """Roughs text down to the characters chromaDB allows in a collection name
+    (lowercase alphanumerics plus ``._-``).
+    """
+    slug = re.sub(r"[^a-z0-9._-]+", "-", text.lower()).strip("-._")
+    return slug[:max_length].rstrip("-._")
 
 
 class Config:
@@ -48,6 +59,7 @@ class Config:
         )
 
         self.default_model_name: str = loaded_file["default_model_name"]
+
         # Convert the list of dicts into a dict of ModelDefinitions
         self.models: dict[str, ModelDefinition] = {}
         for model in loaded_file["models"]:
@@ -88,3 +100,26 @@ class Config:
         self.comfyui_width_input_name: str = loaded_file["comfyui_width_input_name"]
         self.comfyui_seed_node_id: int = loaded_file["comfyui_seed_node_id"]
         self.comfyui_seed_input_name: str = loaded_file["comfyui_seed_input_name"]
+
+    @property
+    def embeddings_scope(self) -> str:
+        """A short id for the embedding space this configuration produces.
+
+        Every vector collection the bot keeps (memories, saved documents) is
+        suffixed with it, because embeddings from a different provider or model
+        have a different shape and are not comparable - and chromaDB refuses to
+        keep vectors of mixed shapes in one collection. So repointing the config
+        at another embeddings service starts fresh collections instead of
+        tripping over the ones the previous service filled.
+
+        Only the embeddings settings are hashed: changing unrelated config
+        keeps the same collections, and a trailing slash on the url does not
+        count as a new provider.
+        """
+        identity = (
+            f"{self.embeddings_base_url.rstrip('/')}\n{self.embeddings_model}"
+        )
+        digest = hashlib.sha256(identity.encode("utf-8")).hexdigest()[:6]
+        # keep the whole collection name inside chromaDB's 63 character limit,
+        # even with the 20 digit discord ids the document collections carry
+        return f"{_slug(self.embeddings_model, 20) or 'model'}-{digest}"

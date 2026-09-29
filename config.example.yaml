@@ -28,8 +28,15 @@ enable_url_reader: true
 url_reader_max_chars: 20000
 # The OpenAI-compatible endpoint used for embeddings.
 # Optional - defaults to `api_base_url`.
+#
+# The bot's chromaDB collections (memories and saved documents) are named after
+# this url and the embedding model below: vectors from a different provider or
+# model have a different shape, which chromaDB refuses to mix in one
+# collection, so pointing the bot at another embeddings service starts fresh
+# collections instead of failing to merge with the old ones. Collections that
+# already exist are left untouched on disk under ./chroma_db.
 embeddings_base_url: "https://embeddings.example.com/v1"
-# The embedding model to use.
+# The embedding model to use. Part of the collection identity described above.
 # Optional - defaults to "text-embedding-3-small".
 embeddings_model: "text-embedding-3-small"
 
