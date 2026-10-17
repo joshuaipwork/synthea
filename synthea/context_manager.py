@@ -22,6 +22,7 @@ from synthea.character_database import CharactersDatabase
 from synthea.commands import ChatbotParser, ParsedArgs
 from synthea.config import Config
 from synthea.constants import SYSTEM_TAG
+from synthea.image_downscale import downscale_image
 from synthea.image_metadata import extract_prompt_from_image
 from synthea.model_definition import ModelDefinition
 from synthea.utilities import inference_logger
@@ -480,7 +481,11 @@ class ContextManager:
                 elif openai_content_type == "image_url" and vision:
                     content = {
                         "type": "image_url",
-                        "image_url": {"url": self.image_to_base64(attachment_content)},
+                        "image_url": {
+                            "url": await asyncio.to_thread(
+                                self.image_to_base64, attachment_content,
+                            ),
+                        },
                     }
                     # TODO: calculate the number of tokens associated with image
                 elif openai_content_type == "image_url":
@@ -562,7 +567,8 @@ class ContextManager:
         return message.author.id, message.author.display_name
 
     def image_to_base64(self, image_path):
-        """Downloads an image and converts into base 64 with a mimetype declaration.
+        """Downloads an image, downscales it if it is oversized, and converts
+        into base 64 with a mimetype declaration.
         """
         # Check if the path is a URL
         is_url = urlparse(image_path).scheme in ["http", "https"]
@@ -584,6 +590,13 @@ class ContextManager:
         # If mime type still couldn't be determined, default to jpeg
         if mime_type is None:
             mime_type = "image/jpeg"
+
+        # the provider rejects oversized images, so anything beyond the
+        # configured pixel count is rescaled (the format is kept, so the mime
+        # type still holds); a limit of 0 disables the resizing
+        image_content = downscale_image(
+            image_content, Config().max_image_input_pixels,
+        )
 
         # Convert to base64
         b64_string = base64.b64encode(image_content).decode("utf-8")

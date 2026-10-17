@@ -3,7 +3,10 @@ import re
 
 import yaml
 
-from synthea.constants import DEFAULT_URL_READER_MAX_CHARS
+from synthea.constants import (
+    DEFAULT_MAX_IMAGE_INPUT_PIXELS,
+    DEFAULT_URL_READER_MAX_CHARS,
+)
 from synthea.model_definition import ModelDefinition
 
 
@@ -56,6 +59,16 @@ class Config:
         )
         self.embeddings_model: str = loaded_file.get(
             "embeddings_model", "text-embedding-3-small",
+        )
+
+        # images sent as input to the model: anything covering more pixels
+        # than this is downscaled first (see downscale_image); set it to 0 to
+        # forward images untouched, whatever their size
+        raw_max_image_input_pixels = loaded_file.get("max_image_input_pixels")
+        self.max_image_input_pixels: int = (
+            DEFAULT_MAX_IMAGE_INPUT_PIXELS
+            if raw_max_image_input_pixels is None
+            else int(raw_max_image_input_pixels)
         )
 
         self.default_model_name: str = loaded_file["default_model_name"]

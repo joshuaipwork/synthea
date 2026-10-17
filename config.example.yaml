@@ -83,6 +83,14 @@ activity: "Type !syn [PROMPT] to talk to me!"
 ### Tavily web search
 tavily_api_key: "tvly-your-tavily-key"
 
+### images sent as input to the model
+# The largest image the bot forwards to the model, in pixels (width * height).
+# Bigger images are downscaled to fit, aspect ratio preserved, so the provider
+# doesn't reject them and users don't have to resize photos by hand. Raise it
+# if your provider accepts larger images, or set it to 0 to send images
+# unchanged whatever their size. Optional - defaults to 2000000 (2MP).
+max_image_input_pixels: 2000000
+
 ### image generation (ComfyUI)
 # Whether image generation is enabled.
 image_generation_enabled: false
