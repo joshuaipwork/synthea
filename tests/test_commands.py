@@ -48,6 +48,8 @@ class TestHelpPages:
         assert "--model" in joined
         assert "--reasoning-effort" in joined
         assert "--dimensions" in joined
+        assert "--no-memory" in joined
+        assert "long-term memory" in joined
 
     def test_image_help_pages_only_show_image_options(self, parser):
         pages = parser.parser.image_help_pages()
@@ -56,6 +58,7 @@ class TestHelpPages:
         assert "--dimensions" in joined
         assert "--character" not in joined
         assert "--model" not in joined
+        assert "--no-memory" not in joined
         assert "The prompt to use with the image model." in joined
 
     def test_help_pages_respect_length_limit(self, parser):
@@ -164,6 +167,22 @@ class TestChatbotParser:
         args = parser.parse("!syn -sp remember this context")
         assert args.use_as_system_prompt is True
 
+    def test_no_memory_flag(self, parser):
+        args = parser.parse("!syn -nm what is my name again")
+        assert args.no_memory is True
+        assert args.prompt == "what is my name again"
+
+    def test_no_memory_long_flag(self, parser):
+        args = parser.parse("!syn --no-memory hi")
+        assert args.no_memory is True
+
+    def test_no_memory_flag_leaves_the_prompt_intact(self, parser):
+        # the flag is consumed, the rest of the message becomes the prompt
+        args = parser.parse("!syn -nm -m DeepSeek hello there")
+        assert args.no_memory is True
+        assert args.model == "deepseek"
+        assert args.prompt == "hello there"
+
     def test_dimensions_flag_sets_width_and_height(self, parser):
         args = parser.parse("!syn -d 1024x512 a dog")
         assert args.dimensions == "1024x512"
@@ -197,6 +216,7 @@ class TestChatbotParser:
         args = parser.parse("!syn hello")
         assert args.use_as_system_prompt is False
         assert args.use_image_model is False
+        assert args.no_memory is False
         assert args.help is False
 
 

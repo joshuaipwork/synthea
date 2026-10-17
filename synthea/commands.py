@@ -196,6 +196,9 @@ class ParsedArgs:
     character: str = None
     # whether to use the given prompt as the system prompt instead of the next turn prompt
     use_as_system_prompt: bool = False
+    # whether this request should stay out of long-term memory entirely:
+    # no memories are loaded for it and none are saved from it
+    no_memory: bool = False
     use_image_model: bool = False
     prompt: str = None
     model: str = None
@@ -252,6 +255,15 @@ class ChatbotParser:
             default=None,
             dest="use_as_system_prompt",
             help="Save the prompt text as the system prompt for the remainder of the reply chain.",
+        )
+        self.parser.add_argument(
+            "-nm",
+            "-no-memory",
+            "--no-memory",
+            action="store_true",
+            default=None,
+            dest="no_memory",
+            help="Answer this request without using long-term memory: no stored memories are loaded, and nothing from this request is saved.",
         )
         self.parser.add_argument(
             "-m",

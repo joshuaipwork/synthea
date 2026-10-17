@@ -53,6 +53,25 @@ class AgentState(TypedDict):
     discord_metadata: DiscordMetadata
 
 
+def skip_memory(state: AgentState) -> bool:
+    """Whether memory must stay out of the request that produced ``state``.
+
+    Two requests bypass mem0: custom system-prompt requests (``-sp``), which
+    take a different path through the prompt, and requests whose arguments
+    carry ``-nm/--no-memory``, where the user asked for an answer that neither
+    draws on stored memories nor stores anything new about them. Both memory
+    nodes test this same flag, so a request never reads memory and then writes
+    it (or vice versa).
+
+    A state without parsed arguments is a plain request, which uses memory as
+    usual.
+    """
+    args: ParsedArgs | None = state.get("args")
+    if args is None:
+        return False
+    return bool(args.use_as_system_prompt or args.no_memory)
+
+
 class AgenticModel(Model):
     """Makes requests to an openAI-compatible API.
     """
@@ -118,8 +137,12 @@ class AgenticModel(Model):
 
         Memory loading is not a tool call and is intentionally never recorded
         in ``tools_used``, so it never shows up in the tool report users see.
+
+        Requests that opted out of memory (``-nm``) load nothing here, so the
+        supervisor is told "Nothing yet" instead of being primed with stored
+        memories.
         """
-        if state["args"].use_as_system_prompt:
+        if skip_memory(state):
             return None
         if self.synthea_config.enable_memory is False:
             return None
@@ -143,9 +166,10 @@ class AgenticModel(Model):
         than raised, since a memory write should never fail a reply.
 
         Like memory loading, memory saving is deliberately excluded from the
-        ``tools_used`` report shown to users.
+        ``tools_used`` report shown to users, and a ``-nm`` request is not
+        written back either: it never touched memory in either direction.
         """
-        if state["args"].use_as_system_prompt:
+        if skip_memory(state):
             return None
         if self.synthea_config.enable_memory is False:
             return None

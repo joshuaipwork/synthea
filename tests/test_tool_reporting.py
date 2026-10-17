@@ -342,7 +342,7 @@ class TestMemoryNodesAreNotReported:
 
     def build_state(self) -> dict:
         return {
-            "args": SimpleNamespace(use_as_system_prompt=False),
+            "args": SimpleNamespace(use_as_system_prompt=False, no_memory=False),
             "messages": ["user: hello"],
             "model": "test-model",
         }
@@ -458,7 +458,7 @@ class TestGraphToolUseReport:
                 "current_time": "now",
                 "day_of_week": "Monday",
                 "model": "test-model",
-                "args": SimpleNamespace(use_as_system_prompt=False),
+                "args": SimpleNamespace(use_as_system_prompt=False, no_memory=False),
                 "discord_metadata": None,
             },
         )

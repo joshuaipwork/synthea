@@ -9,6 +9,7 @@ Since it is locally hosted, you have greater control over the performance and us
 - Locally hosted: No external API calls, ensuring privacy and lower latency.
 - Configurable settings: Adjust the bot's behavior to your server's needs.
 - Keeps track of replies and includes them in its memory
+- Any single request can opt out of that memory with `-nm`: it is answered without stored memories, and nothing from it is remembered
 
 # Installation
 Refer to the [installation documentation](/docs/installation.md) for how to install this application.

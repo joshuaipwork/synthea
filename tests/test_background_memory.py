@@ -195,7 +195,7 @@ def memory_saver_node(memory):
 
 def build_state(**overrides) -> dict:
     state = {
-        "args": SimpleNamespace(use_as_system_prompt=False),
+        "args": SimpleNamespace(use_as_system_prompt=False, no_memory=False),
         "messages": ["user: hello", "bot: hi"],
         "model": "test-model",
     }
@@ -268,7 +268,7 @@ class TestMemorySaverNode:
             "current_time": "now",
             "day_of_week": "Monday",
             "model": "test-model",
-            "args": SimpleNamespace(use_as_system_prompt=False),
+            "args": SimpleNamespace(use_as_system_prompt=False, no_memory=False),
             "discord_metadata": None,
         }
         result = await asyncio.wait_for(
@@ -296,3 +296,38 @@ class TestMemorySaverNode:
         )
 
         assert result is None
+
+    async def test_skips_when_the_request_asks_for_no_memory(
+        self, memory, memory_saver_node, monkeypatch,
+    ):
+        """A ``-nm`` request must not be written back to mem0 either."""
+        monkeypatch.setattr(
+            memory, "schedule_memory_save",
+            lambda *args, **kwargs: pytest.fail("should not schedule a save"),
+        )
+
+        result = await memory_saver_node.memory_saver_node(
+            build_state(
+                args=SimpleNamespace(
+                    use_as_system_prompt=False, no_memory=True,
+                ),
+            ),
+        )
+
+        assert result is None
+
+    async def test_a_request_without_the_flag_still_saves(
+        self, memory, memory_saver_node, monkeypatch,
+    ):
+        """Opting out has to be opt-in: the plain default still touches memory."""
+        scheduled: list[tuple] = []
+        monkeypatch.setattr(
+            memory,
+            "schedule_memory_save",
+            lambda messages, model_name: scheduled.append((messages, model_name)),
+        )
+
+        result = await memory_saver_node.memory_saver_node(build_state())
+
+        assert result == {}
+        assert scheduled
