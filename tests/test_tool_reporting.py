@@ -18,7 +18,6 @@ import pytest
 from synthea.dtos import GenerationResponse
 from synthea.tool_report import (
     MAX_REPORT_CHARS,
-    NO_TOOLS_USED_TEXT,
     TOOL_USE_FIELD_NAME,
     ToolCall,
     describe_tool_call,
@@ -207,8 +206,9 @@ class TestFormatToolUse:
     def test_untracked_tool_use_renders_nothing(self):
         assert format_tool_use(None) is None
 
-    def test_no_tools_says_the_reply_is_the_models_own_knowledge(self):
-        assert format_tool_use([]) == NO_TOOLS_USED_TEXT
+    def test_no_tools_reports_nothing(self):
+        # a reply the model produced on its own carries no tool field at all
+        assert format_tool_use([]) is None
 
     def test_one_line_per_tool_call_in_call_order(self):
         report = format_tool_use(
@@ -613,7 +613,7 @@ class TestClientRendersToolUse:
             self.build_response([]), message=None,
         )
 
-        assert self.field(sender.sent[-1]["embed"]) == NO_TOOLS_USED_TEXT
+        assert self.field(sender.sent[-1]["embed"]) is None
 
     async def test_base_response_has_no_field_when_tool_use_untracked(self, sender):
         await sender.send_response_as_base(

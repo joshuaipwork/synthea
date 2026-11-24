@@ -127,6 +127,10 @@ class AgenticModel(Model):
         )
 
         self.tools = [search_tool, generate_image]
+        if synthea_config.enable_memory:
+            # an on-demand lookup, for when the memories injected into the
+            # prompt above are not enough to answer the question
+            self.tools.append(search_memory)
         if synthea_config.enable_url_reader:
             self.tools.append(read_url)
         if self.synthea_config.enable_rag_lookup:
@@ -226,6 +230,21 @@ class AgenticModel(Model):
             # sanitize arguments to resolve common failure cases
             # such as quoted strings
             tool_call["args"] = sanitize_args(tool_call["args"])
+
+            # a request that opted out of memory (-nm, -sp) should not reach back
+            # into stored memories through the tool
+            if tool_call["name"] == "search_memory" and skip_memory(state):
+                results.append(
+                    ToolMessage(
+                        content=(
+                            "Long-term memory is turned off for this request, so "
+                            "stored memories cannot be searched. Answer without them."
+                        ),
+                        tool_call_id=tool_call["id"],
+                    ),
+                )
+                continue
+
             tool_fn = {t.name: t for t in self.tools}[tool_call["name"]]
 
             try:
@@ -312,7 +331,11 @@ class AgenticModel(Model):
 
         agent_config: RunnableConfig = {
             "callbacks": [self.langfuse_handler],
-            "configurable": {"discord_metadata": discord_metadata},
+            "configurable": {
+                "discord_metadata": discord_metadata,
+                # which mem0 client the memory search tool should use
+                "model_name": model_name,
+            },
         }
 
         result = await self.agent.ainvoke(state, config=agent_config)
@@ -413,6 +436,47 @@ async def document_search(
         require=require,
         exclude=exclude,
         regex=regex,
+    )
+
+
+@reported_as(label="memory search", show=("query",))
+@tool
+async def search_memory(query: str, config: RunnableConfig) -> str:
+    """Searches the long-term memories stored about the user who sent the
+    current message.
+
+    Your instructions already carry a few memories about this user, but only
+    the handful that matched when the request started. Use this tool whenever
+    the answer needs something else they told the bot before: names,
+    preferences, history, past decisions, pets, job, anything from earlier
+    conversations. Prefer it over guessing, over asking the user to repeat
+    themselves, and over searching the web for something only they know.
+
+    Results list each memory with its id; mention the id if the user asks
+    where a memory came from, so they can delete it with /delete_memory.
+
+    Args:
+        query: What to look for, phrased around the facts or names involved.
+
+    """
+    options: dict = (config or {}).get("configurable") or {}
+    metadata: DiscordMetadata | None = options.get("discord_metadata")
+    if metadata is None:
+        # memories are stored per user: without a sender there is nobody to
+        # search, and falling back to someone else's memories would leak them
+        return (
+            "Memory search is unavailable for this request: the sender of the "
+            "message could not be identified."
+        )
+
+    # the mem0 client of the model generating this reply; the memories
+    # themselves live in one shared collection either way
+    model_name = options.get("model_name") or memory.bot_config.default_model_name
+    inference_logger.info(
+        f"Searching memories of user {metadata.user_id} with query: {query}",
+    )
+    return await memory.search_user_memories(
+        query=query, user_id=str(metadata.user_id), model_name=model_name,
     )
 
 

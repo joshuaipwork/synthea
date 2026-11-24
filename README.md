@@ -10,6 +10,7 @@ Since it is locally hosted, you have greater control over the performance and us
 - Configurable settings: Adjust the bot's behavior to your server's needs.
 - Keeps track of replies and includes them in its memory
 - Any single request can opt out of that memory with `-nm`: it is answered without stored memories, and nothing from it is remembered
+- Searches that memory on demand with a `memory search` tool, when what it remembered up front is not enough
 
 # Installation
 Refer to the [installation documentation](/docs/installation.md) for how to install this application.

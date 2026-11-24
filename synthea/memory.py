@@ -140,6 +140,48 @@ async def wait_for_pending_memory_saves(timeout: float | None = None) -> bool:
     return not still_pending
 
 
+# how many stored memories one lookup brings back: enough for a targeted
+# question without dumping a user's whole history into the prompt
+SEARCH_TOP_K: int = 5
+
+
+def format_memories(
+    memories: list[dict[str, Any]], *, with_ids: bool = False,
+) -> str:
+    """Stored memories as one bullet per line, or an empty string for none.
+
+    Ids are opt-in: the prompt injection stays a clean list of facts, while a
+    search result also names each entry so the user can delete one of them
+    with /delete_memory afterwards.
+    """
+    lines: list[str] = []
+    for item in memories:
+        line = f"- {item['memory']}"
+        if with_ids and item.get("id"):
+            line += f" (id: {item['id']})"
+        lines.append(line)
+    return "\n".join(lines)
+
+
+async def search_user_memories(query: str, user_id: str, model_name: str) -> str:
+    """The stored memories about ``user_id`` matching ``query``, as bullets.
+
+    This backs the agent's memory search tool: unlike the prompt injection it
+    carries each memory's id, because the point of searching on demand is to
+    find something the injection left out - including an entry the user then
+    wants gone.
+    """
+    memory = _get_memory(model_name)
+    found = await memory.search(
+        query=query, filters={"user_id": user_id}, top_k=SEARCH_TOP_K,
+    )
+
+    results = found.get("results", [])
+    if not results:
+        return "No stored memories matched that search."
+    return format_memories(results, with_ids=True)
+
+
 async def retrieve_relevant_memories(
     messages: list[BaseMessage], model_name: str,
 ) -> str:
@@ -157,14 +199,10 @@ async def retrieve_relevant_memories(
 
     # retrieve the memories from the last user
     relevant_memories = await memory.search(
-        query=user_content, filters={"user_id": user_id}, top_k=5,
+        query=user_content, filters={"user_id": user_id}, top_k=SEARCH_TOP_K,
     )
 
-    memory_context = "\n".join(
-        f"- {m['memory']}" for m in relevant_memories.get("results", [])
-    )
-
-    return memory_context
+    return format_memories(relevant_memories.get("results", []))
 
 
 async def add_memories(messages: list[BaseMessage], model_name: str) -> str:

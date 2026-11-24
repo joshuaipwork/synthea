@@ -10,7 +10,9 @@ client renders as one line per call:
     • read page: url="https://example.com/time"
 
 Memory loading and saving are graph plumbing rather than tools: they never
-produce a ``ToolCall``, so they never show up in the report.
+produce a ``ToolCall``, so they never show up in the report. Asking for a
+memory on demand is different — ``memory search`` is a tool the model chose
+to call, so it is reported like any other lookup.
 """
 
 from dataclasses import dataclass
@@ -90,7 +92,8 @@ def format_tool_use(tools_used: list[ToolCall] | None) -> str | None:
     """Formats the report for the user: one line per tool call.
 
     Returns None when tool use was not tracked for the response (nothing
-    honest to report), and NO_TOOLS_USED_TEXT when no tools were called at all.
+    honest to report), and also when no tools were called at all: a reply the
+    model produced on its own gets no tool field.
     """
     if tools_used is None:
         return None
