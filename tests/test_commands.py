@@ -221,9 +221,41 @@ class TestChatbotParser:
 
 
 class TestModelDefinitionConfig:
-    def test_reasoning_effort_defaults_to_medium(self, config):
-        # glm46v does not specify a reasoning_effort, so it should default
-        assert config.models["glm46v"].reasoning_effort == "medium"
+    """Parsing of the ``models:`` block.
 
-    def test_reasoning_effort_from_config(self, config):
-        assert config.models["deepseek"].reasoning_effort == "high"
+    Each config is built from config.example.yaml rather than the local
+    config.yaml: that file is git-ignored, so the models it lists are a
+    property of the machine running the suite, not of this code.
+    """
+
+    def test_reasoning_effort_defaults_to_medium(self, load_config):
+        # an entry that says nothing about reasoning_effort
+        config = load_config(
+            models=[
+                {
+                    "plain-model": {
+                        "description": "no reasoning effort configured",
+                        "vision": False,
+                        "reasoning": False,
+                    },
+                },
+            ],
+        )
+
+        assert config.models["plain-model"].reasoning_effort == "medium"
+
+    def test_reasoning_effort_from_config(self, load_config):
+        config = load_config(
+            models=[
+                {
+                    "eager-model": {
+                        "description": "configured to work harder",
+                        "vision": False,
+                        "reasoning": True,
+                        "reasoning_effort": "high",
+                    },
+                },
+            ],
+        )
+
+        assert config.models["eager-model"].reasoning_effort == "high"
